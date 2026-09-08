@@ -18,6 +18,7 @@ AgentLens Audit 让任何多 Agent 系统（Hermes / CrewAI / AutoGen / LangGrap
 | ⚖️ compliance | 决策权限合规 | 用户本人决策/用户授权/自主决策三分法 + 知情权 + 最终否决权 |
 | 📋 regulations | 合规条款映射 | 审计发现自动关联法规条款（网信办《实施意见》/ EU AI Act /《拟人化互动办法》） |
 | 🚪 gate | CI 集成 | 违规超阈值 → 非零退出码，审计当 lint 挂 CI |
+| 🔍 watchdog | 持续审计 / 漂移监控 | 定期复检，对比基线发现新问题漂移，支持 cron 调度 |
 
 ## 🚀 快速开始
 
@@ -41,6 +42,37 @@ agentlens-audit diff --baseline last_month.jsonl --current this_month.jsonl
 
 # CI 门禁：high 级违规数 > 0 即失败
 agentlens-audit audit --input events.jsonl --gate --fail-on high
+```
+
+## 🔍 Watchdog — 持续审计 / 漂移监控
+
+审计不是一次性行为。Watchdog 子命令用于定期复检，对比当前审计结果与基线，发现新问题漂移。
+
+### 建立基线（首次）
+
+```bash
+agentlens-audit watchdog --input events.jsonl --write-baseline baseline.json
+```
+
+### 对比报警
+
+```bash
+agentlens-audit watchdog --input events.jsonl --baseline baseline.json
+```
+
+### 退出码语义
+
+| 退出码 | 含义 |
+|:--|:--|
+| 0 | 无新增 high severity finding，审计状态正常 |
+| 1 | 存在新增 high severity finding，触发报警 |
+| 2 | 输入错误（文件不存在、基线 JSON 非法等） |
+
+### cron 调度示例
+
+```bash
+# 每 24 小时跑一次，输出到日志
+0 0 * * * /usr/local/bin/agentlens-audit watchdog --input /data/events.jsonl --baseline /data/baseline.json >> /var/log/agentlens-watchdog.log 2>&1
 ```
 
 ## 📥 支持的输入

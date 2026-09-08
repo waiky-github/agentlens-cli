@@ -16,6 +16,8 @@ from .shadow import detect_shadow_agents
 from .compliance import audit_compliance
 from .integrity import build_integrity_block, embed_integrity_meta, verify_report
 from .regulations import map_all_layers, list_regulations
+from .remediation import map_all_layers as map_all_remediations, list_remediations
+from .watchdog import run_watchdog
 
 
 def _load_events(input_path: str) -> list[dict]:
@@ -432,6 +434,8 @@ def cmd_audit(args):
 
     # Apply regulation references to all findings across all layers
     map_all_layers(result)
+    # Apply remediation suggestions to all findings
+    map_all_remediations(result)
 
     if args.json:
         result["integrity"] = build_integrity_block(result, args.prev_hash)
@@ -572,6 +576,7 @@ def _run_audit_for_diff(events: list[dict]) -> dict:
     }
 
     map_all_layers(result)
+    map_all_remediations(result)
 
     return result
 
@@ -789,6 +794,7 @@ def cmd_demo(args):
     }
 
     map_all_layers(result)
+    map_all_remediations(result)
 
     html = render_html(result, demo_input)
     from .integrity import hash_content
@@ -852,6 +858,156 @@ def cmd_regs(args):
                 print(f"  {regulation} | {article}: {clause}")
 
 
+def build_cmd_remediations(subparsers):
+    """Register the `remediations` subcommand."""
+    p = subparsers.add_parser("remediations", help="List all remediation suggestion mappings")
+    p.add_argument(
+        "--title", default=None,
+        help="Filter mappings by finding title (substring match)",
+    )
+    p.set_defaults(func=cmd_remediations)
+
+
+def cmd_remediations(args):
+    """Execute the `remediations` subcommand."""
+    entries = list_remediations(args.title)
+    if not entries:
+        print("No remediation mappings found.", file=sys.stderr)
+        sys.exit(0)
+    for entry in entries:
+        print(f"\n--- {entry['title']} ---")
+        for rem in entry["remediations"]:
+            priority = rem.get("priority", "medium")
+            action = rem.get("action", "")
+            detail = rem.get("detail", "")
+            print(f"  [{priority.upper()}] {action}")
+            if detail:
+                print(f"         {detail}")
+
+
+def build_cmd_watchdog(subparsers):
+    """Register the `watchdog` subcommand."""
+    p = subparsers.add_parser("watchdog", help="持续审计 / 漂移监控：对比当前审计与基线")
+    p.add_argument(
+        "--input", "-i", required=True,
+        help="Path to current event file (JSONL, nested JSON, or gateway.log)",
+    )
+    group = p.add_mutually_exclusive_group(required=True)
+    group.add_argument(
+        "--baseline", "-b", default=None,
+        help="Path to baseline audit result JSON file",
+    )
+    group.add_argument(
+        "--write-baseline", "-w", default=None,
+        help="Run audit and write baseline result to this JSON file",
+    )
+    p.add_argument(
+        "--json", action="store_true", default=False,
+        help="Output results as JSON (default: human-readable text)",
+    )
+    p.set_defaults(func=cmd_watchdog)
+
+
+def cmd_watchdog(args):
+    """Execute the `watchdog` subcommand."""
+    input_path = args.input
+    if not os.path.isfile(input_path):
+        print(f"Error: input file not found: {input_path}", file=sys.stderr)
+        sys.exit(2)
+
+    events = _load_events(input_path)
+    if not events:
+        print("Error: no events parsed from input file", file=sys.stderr)
+        sys.exit(2)
+
+    current_result = _run_audit_for_diff(events)
+
+    # --write-baseline 模式
+    if args.write_baseline:
+        output_path = args.write_baseline
+        parent = os.path.dirname(os.path.abspath(output_path))
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        with open(output_path, "w", encoding="utf-8") as fh:
+            json.dump(current_result, fh, indent=2, ensure_ascii=False)
+        print(f"Baseline written to {output_path}")
+        sys.exit(0)
+
+    # --baseline 模式
+    if not os.path.isfile(args.baseline):
+        print(f"Error: baseline file not found: {args.baseline}", file=sys.stderr)
+        sys.exit(2)
+
+    with open(args.baseline, "r", encoding="utf-8") as fh:
+        try:
+            baseline = json.load(fh)
+        except json.JSONDecodeError as e:
+            print(f"Error: invalid baseline JSON: {e}", file=sys.stderr)
+            sys.exit(2)
+
+    if not isinstance(baseline, dict):
+        print("Error: baseline file does not contain a valid audit result dict", file=sys.stderr)
+        sys.exit(2)
+
+    result = run_watchdog(current_result, baseline)
+
+    if args.json:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    else:
+        _print_watchdog_human(result)
+
+    if result["has_new_high"]:
+        sys.exit(1)
+    else:
+        sys.exit(0)
+
+
+def _print_watchdog_human(result: dict):
+    """Print watchdog result in human-readable format."""
+    summary = result["summary"]
+    lines = []
+    lines.append("=" * 60)
+    lines.append("  AgentLens Watchdog — 漂移监控报告")
+    lines.append("=" * 60)
+    lines.append("")
+    lines.append("[Summary]")
+    lines.append(f"  新增 High severity: {summary['new_high']}")
+    lines.append(f"  新增 Medium severity: {summary['new_medium']}")
+    lines.append(f"  已解决 High severity: {summary['resolved_high']}")
+    lines.append(f"  成本变化: {summary['cost_change']:+.6f} CNY")
+    lines.append(f"  闭环率变化: {summary['closure_rate_change']:+.4f}")
+
+    new_findings = result.get("new_findings", [])
+    if new_findings:
+        lines.append("")
+        lines.append(f"[新增发现] ({len(new_findings)} 条)")
+        for f in new_findings:
+            lines.append(f"  [{f['severity'].upper()}] {f['layer']}: {f['title']} (count +{f['count_delta']})")
+
+    resolved_findings = result.get("resolved_findings", [])
+    if resolved_findings:
+        lines.append("")
+        lines.append(f"[已解决发现] ({len(resolved_findings)} 条)")
+        for f in resolved_findings:
+            lines.append(f"  [{f['severity'].upper()}] {f['layer']}: {f['title']}")
+
+    changed = result.get("changed_counts", {})
+    if changed:
+        lines.append("")
+        lines.append("[计数变化]")
+        for key, cc in sorted(changed.items()):
+            lines.append(f"  {key}: {cc['baseline']} → {cc['current']} (delta {cc['delta']:+d})")
+
+    has_new_high = result.get("has_new_high", False)
+    lines.append("")
+    if has_new_high:
+        lines.append("*** 存在新增高风险发现，退出码 1 ***")
+    else:
+        lines.append("*** 无新增高风险发现，退出码 0 ***")
+    lines.append("=" * 60)
+    print("\n".join(lines))
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="agentlens-audit",
@@ -870,6 +1026,8 @@ def main():
     build_cmd_demo(subparsers)
     build_cmd_verify(subparsers)
     build_cmd_regs(subparsers)
+    build_cmd_remediations(subparsers)
+    build_cmd_watchdog(subparsers)
 
     args = parser.parse_args()
     if args.command is None:

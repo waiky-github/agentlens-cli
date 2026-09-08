@@ -283,6 +283,26 @@ class _HtmlBuilder:
                             f"<li>{self._esc(regulation)} — {self._esc(article)}: {self._esc(clause)}</li>"
                         )
                 rows.append("</ul></div>")
+            # Remediation suggestions
+            rems = f.get("remediation", [])
+            if rems:
+                rows.append('<div class="finding-rems">')
+                rows.append('<span class="finding-rems-label">修复建议:</span>')
+                rows.append('<ul class="rems-list">')
+                for rem in rems:
+                    priority = rem.get("priority", "medium")
+                    action = rem.get("action", "")
+                    detail = rem.get("detail", "")
+                    pri_color = self._severity_color(priority) if priority in ("high", "medium", "low") else "#6c757d"
+                    rows.append(
+                        f'<li>'
+                        f'<span class="rems-pri" style="background:{pri_color}">{priority.upper()}</span> '
+                        f'<strong>{self._esc(action)}</strong>'
+                    )
+                    if detail:
+                        rows.append(f'<br><span class="rems-detail">{self._esc(detail)}</span>')
+                    rows.append('</li>')
+                rows.append("</ul></div>")
             rows.append("</div>")
         return "\n".join(rows)
 
@@ -532,6 +552,53 @@ class _HtmlBuilder:
             f'</div>'
         )
 
+    def _section_remediation_priority(self) -> str:
+        """Build a remediation priority summary section (section 8)."""
+        layer_keys = ["graph", "decision", "evidence", "cost", "shadow", "compliance"]
+        high_items = []
+        medium_items = []
+        low_items = []
+        for key in layer_keys:
+            layer = self._r.get(key, {})
+            if not isinstance(layer, dict):
+                continue
+            for f in layer.get("findings", []):
+                title = f.get("title", "")
+                for rem in f.get("remediation", []):
+                    priority = rem.get("priority", "medium")
+                    if priority == "high":
+                        high_items.append(title)
+                    elif priority == "medium":
+                        medium_items.append(title)
+                    elif priority == "low":
+                        low_items.append(title)
+
+        # Deduplicate per priority
+        high_unique = sorted(set(high_items))
+        medium_unique = sorted(set(medium_items))
+        low_unique = sorted(set(low_items))
+
+        high_rows = "".join(f"<li>{self._esc(t)}</li>" for t in high_unique) if high_unique else "<li class='nodata'>无</li>"
+        medium_rows = "".join(f"<li>{self._esc(t)}</li>" for t in medium_unique) if medium_unique else "<li class='nodata'>无</li>"
+        low_rows = "".join(f"<li>{self._esc(t)}</li>" for t in low_unique) if low_unique else "<li class='nodata'>无</li>"
+
+        return (
+            f'<div class="section" id="layer-remediation-priority">'
+            f'<h2>8. 修复优先级</h2>'
+            f'<div class="metrics-bar">'
+            f'<span>High 优先级修复: <strong>{len(high_unique)}</strong></span>'
+            f'<span>Medium 优先级修复: <strong>{len(medium_unique)}</strong></span>'
+            f'<span>Low 优先级修复: <strong>{len(low_unique)}</strong></span>'
+            f'</div>'
+            f'<h3>High 优先级 ({len(high_unique)})</h3>'
+            f'<ul class="prio-list">{high_rows}</ul>'
+            f'<h3>Medium 优先级 ({len(medium_unique)})</h3>'
+            f'<ul class="prio-list">{medium_rows}</ul>'
+            f'<h3>Low 优先级 ({len(low_unique)})</h3>'
+            f'<ul class="prio-list">{low_rows}</ul>'
+            f'</div>'
+        )
+
     def _section_footer(self) -> str:
         return (
             f'<div class="footer">'
@@ -595,6 +662,16 @@ tr:hover{background:#f8f9fa}
 .finding-regs-label{font-weight:700;color:#0066cc}
 .regs-list{margin:4px 0 0 16px;padding:0;list-style:disc}
 .regs-list li{margin:2px 0;line-height:1.4}
+.finding-rems{margin-top:8px;padding:8px 10px;background:#f0fff4;border-radius:4px;
+  font-size:11px;color:#334}
+.finding-rems-label{font-weight:700;color:#198754}
+.rems-list{margin:4px 0 0 16px;padding:0;list-style:disc}
+.rems-list li{margin:4px 0;line-height:1.4}
+.rems-pri{display:inline-block;color:#fff;font-size:9px;font-weight:700;
+  padding:1px 6px;border-radius:3px;margin-right:4px;vertical-align:middle}
+.rems-detail{color:#555;font-size:10px}
+.prio-list{margin:4px 0 12px 20px;padding:0;font-size:13px}
+.prio-list li{margin:2px 0;line-height:1.4}
 """
 
     # ── build ────────────────────────────────────────────────────
@@ -615,6 +692,7 @@ tr:hover{background:#f8f9fa}
             + self._section_shadow(self._r.get("shadow", {}))
             + self._section_compliance(self._r.get("compliance", {}))
             + self._section_compliance_mapping()
+            + self._section_remediation_priority()
             + self._section_footer()
             + "</div>\n</body>\n</html>"
         )
