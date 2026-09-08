@@ -1,6 +1,15 @@
 # AgentLens CLI
 
-Multi-agent cost governance toolkit — standalone CLI tool to detect, quantify, and recommend fixes for token waste in AI agent collaborations.
+Multi-agent governance toolkit — four-layer audit CLI covering collaboration graph, decision audit, evidence chain, and cost governance.
+
+## Four-Layer Audit
+
+| Layer | Module | Description |
+|-------|--------|-------------|
+| 1. Collaboration Graph | `graph.py` | Reconstructs task→decompose→dispatch→execute→summary chains. Outputs nodes, edges, task closure rate, absent workers. |
+| 2. Decision Audit | `decision.py` | Checks dispatch rationale, L3 approval chains, and detects approval bypass (`APPROVAL_BYPASS_CONFIRMED`). |
+| 3. Evidence Chain | `evidence.py` | Verifies every event/claim has a reachable `evidence_ref`. Outputs completeness ratio and missing-evidence list. |
+| 4. Cost Layer | `governance.py` + `attribution.py` | Token attribution + waste detection (large-output injection, repeated calls, context bloat, etc.). |
 
 ## Install
 
@@ -12,64 +21,101 @@ pip install -e .
 Or run directly without install:
 
 ```bash
-python -m agentlens_cli cost --input examples/hermes_gateway_events.jsonl
+python -m agentlens_cli audit --input examples/hermes_gateway_events.jsonl
 ```
 
 ## Usage
 
+### `audit` — Full Four-Layer Audit
+
 ```bash
 # Human-readable report (default)
-agentlens-audit cost --input events.jsonl
+agentlens-audit audit --input events.jsonl
 
 # JSON output
-agentlens-audit cost --input events.jsonl --json
+agentlens-audit audit --input events.jsonl --json
 
 # Custom pricing
-agentlens-audit cost --input events.jsonl --json --input-price 1.5 --output-price 5.0
+agentlens-audit audit --input events.jsonl --json --input-price 1.5 --output-price 5.0
 
-# Parse Hermes gateway.log (best-effort text parsing)
+# Works with nested JSON (e.g. approval_bypass.json), JSONL, and gateway.log
+agentlens-audit audit --input examples/approval_bypass.json --json
+agentlens-audit audit --input examples/multi_agent_task_events_v2.jsonl --json
+```
+
+### `cost` — Cost Layer Only (backward compatible)
+
+```bash
+agentlens-audit cost --input events.jsonl
+agentlens-audit cost --input events.jsonl --json
 agentlens-audit cost --input ~/.hermes/logs/gateway.log
 ```
 
-## Input
+## Input Formats
 
-JSONL event stream compatible with Hermes gateway event schema. Each line is a JSON object with:
+- **JSONL** — One JSON event per line (standard event stream)
+- **Nested JSON** — Single JSON object with `"events"` key containing event array (scenario format)
+- **Hermes gateway.log** — Best-effort text parsing of raw Hermes logs
 
-- `event_id` — unique event identifier
-- `type` — one of `model_call`, `tool_invocation`, `user_message_arrived`, `agent_response_sent`, `session_event`
-- `timestamp` — ISO8601 UTC
-- `source` — origin identifier
-- `payload` — type-specific data (e.g., `tokens_in`, `tokens_out`, `output_chars`, `tool`, `agent`)
-- `evidence_ref` — reference to source log line
-
-Also supports direct Hermes `gateway.log` text parsing (best-effort).
+Event types recognized: `task_split`, `task_dispatch`, `task_completion`, `task_failed`, `task_retry`, `approval`, `action_executed`, `conflict_resolved`, `model_call`, `tool_invocation`, `user_message_arrived`, `agent_response_sent`, `session_event`.
 
 ## Output
 
-Key fields in JSON output:
+Key fields in JSON output (audit subcommand):
 
 | Field | Description |
 |-------|-------------|
-| `cost_by_agent` | Per-agent token/cost breakdown |
-| `total_cost` | Total estimated cost (CNY) |
-| `total_tokens_in` / `total_tokens_out` | Total token counts |
-| `findings` | Array of waste detection findings |
-| `total_est_wasted_cost` | Sum of wasted costs |
-| `avoidable_cost_ratio` | Wasted / total cost ratio |
+| `events_loaded` | Total events parsed |
+| `graph.nodes` | Agent/task nodes with roles |
+| `graph.edges` | Dispatch/approval/completion edges |
+| `graph.metrics.closure_rate` | Task completion ratio (closed / dispatched) |
+| `graph.metrics.absent_workers` | Workers dispatched to but never completed |
+| `decision.decision_chain` | Ordered decision steps with rationale/approval |
+| `decision.approval_bypass_detected` | Boolean: `APPROVAL_BYPASS_CONFIRMED` found |
+| `evidence.completeness` | Ratio of events with valid evidence_ref |
+| `evidence.missing_evidence` | Events without reachable evidence |
+| `cost.total_cost` | Total estimated cost (CNY) |
+| `cost.findings` | Waste detection findings |
 
-Each finding includes severity, evidence references, quantified waste, and actionable recommendations.
+Each finding follows the structured format: `severity`, `title`, `evidence_refs`, `recommendation`, `est_impact` (where applicable).
 
-## Waste Detection Rules
+## Acceptance Scenarios
 
-Based on cost-governance SKILL.md:
+### Scenario 1: Approval Bypass Detection
 
-1. **Large-output tool injection** — tool output > 10,000 chars injected into context ungoverned
-2. **Repeated high-output tool calls** — same tool re-fetched within 5 minutes
-3. **Session-level context bloat** — context grows without deliberate compaction across sessions
-4. **Inefficient loops** — rapid repeated calls to same tool (6+ in 2 minutes)
-5. **Structural observations** — no per-agent token caps
-6. **Cost-model gaps** — unit prices are estimates
+```bash
+python -m agentlens_cli audit --input examples/approval_bypass.json --json
+```
+
+Expected: `decision.approval_bypass_detected = true`, `APPROVAL_BYPASS_CONFIRMED` finding with severity `high`.
+
+### Scenario 2: Full Closure (5/5 workers)
+
+```bash
+python -m agentlens_cli audit --input examples/multi_agent_task_events_v2.jsonl --json
+```
+
+Expected: `graph.metrics.closure_rate = 1.0`, `decision.approval_bypass_detected = false`, L3 approval chain compliant.
+
+### Scenario 3: Data Gaps (missing workers)
+
+```bash
+python -m agentlens_cli audit --input examples/multi_agent_task_events.jsonl --json
+```
+
+Expected: `graph.metrics.closure_rate < 1.0`, `absent_workers` includes graph-builder and decision-auditor.
+
+### Scenario 4: Hermes Gateway (regression)
+
+```bash
+python -m agentlens_cli audit --input examples/hermes_gateway_events.jsonl --json
+```
+
+Expected: All four layers produce output, JSON valid, exit code 0, ~11K events, ~435 cost findings.
 
 ## Example Data
 
-`examples/hermes_gateway_events.jsonl` — Real Hermes gateway event stream (~11K events).
+- `examples/hermes_gateway_events.jsonl` — Real Hermes gateway event stream (~11K events)
+- `examples/approval_bypass.json` — High-risk config change without L3 approval (4 events)
+- `examples/multi_agent_task_events_v2.jsonl` — Full 5-worker pipeline with retries, conflict resolution, L3 approval (20 events)
+- `examples/multi_agent_task_events.jsonl` — Gaps scenario: 3 dispatched, only 1 completed (5 events)
