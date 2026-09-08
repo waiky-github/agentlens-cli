@@ -972,6 +972,7 @@ def _print_watchdog_human(result: dict):
     lines.append("")
     lines.append("[Summary]")
     lines.append(f"  新增 High severity: {summary['new_high']}")
+    lines.append(f"  High 数量增长: {summary.get('growing_high', 0)}")
     lines.append(f"  新增 Medium severity: {summary['new_medium']}")
     lines.append(f"  已解决 High severity: {summary['resolved_high']}")
     lines.append(f"  成本变化: {summary['cost_change']:+.6f} CNY")
@@ -1001,7 +1002,7 @@ def _print_watchdog_human(result: dict):
     has_new_high = result.get("has_new_high", False)
     lines.append("")
     if has_new_high:
-        lines.append("*** 存在新增高风险发现，退出码 1 ***")
+        lines.append("*** 存在新增或增长的高风险发现，退出码 1 ***")
     else:
         lines.append("*** 无新增高风险发现，退出码 0 ***")
     lines.append("=" * 60)

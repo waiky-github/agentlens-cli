@@ -18,8 +18,8 @@ def run_watchdog(current_result: dict, baseline: dict) -> dict:
             new_findings: list[dict] — baseline 无而 current 新增的 finding 明细
             resolved_findings: list[dict] — baseline 有而 current 消失的 finding 明细
             changed_counts: dict — 各层各 title 计数变化
-            summary: dict — 新增 high/medium 数、解决 high 数、成本变化、closure_rate 变化
-            has_new_high: bool — 是否存在新增 high severity finding
+            summary: dict — 新增 high/medium 数、High 数量增长数、解决 high 数、成本变化、closure_rate 变化
+            has_new_high: bool — 存在新增 high severity finding，或已有 high finding 数量增长
         }
     """
     layer_keys = ["graph", "decision", "evidence", "cost", "shadow", "compliance"]
@@ -100,6 +100,13 @@ def run_watchdog(current_result: dict, baseline: dict) -> dict:
     new_medium = sum(1 for f in new_findings if f["severity"] == "medium")
     resolved_high = sum(1 for f in resolved_findings if f["severity"] == "high")
 
+    # 数量增长的 high：已有 (layer,title,severity) 的计数变大 —— 同样是高风险漂移，
+    # 漏掉会让「unauthorized tool calls 从 5 涨到 20」这类最常见漂移不报警。
+    growing_high = sum(
+        1 for key, cc in changed_counts.items()
+        if key.endswith("/high") and cc["delta"] > 0
+    )
+
     b_cost = baseline.get("cost", {}).get("total_cost", 0)
     c_cost = current_result.get("cost", {}).get("total_cost", 0)
     cost_change = round(c_cost - b_cost, 6)
@@ -110,6 +117,7 @@ def run_watchdog(current_result: dict, baseline: dict) -> dict:
 
     summary = {
         "new_high": new_high,
+        "growing_high": growing_high,
         "new_medium": new_medium,
         "resolved_high": resolved_high,
         "cost_change": cost_change,
@@ -121,5 +129,5 @@ def run_watchdog(current_result: dict, baseline: dict) -> dict:
         "resolved_findings": resolved_findings,
         "changed_counts": changed_counts,
         "summary": summary,
-        "has_new_high": new_high > 0,
+        "has_new_high": (new_high + growing_high) > 0,
     }

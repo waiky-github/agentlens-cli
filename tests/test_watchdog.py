@@ -131,6 +131,38 @@ class TestWatchdogNewFinding:
         assert changed[key]["current"] == 2
         assert changed[key]["delta"] == 1
 
+    def test_high_count_increment_triggers_alert(self):
+        """已有 high finding 数量增长（如 unauthorized calls 5→20）必须触发报警。"""
+        baseline = _make_baseline_result({
+            "shadow": [{"title": "SHADOW_AGENT_DETECTED", "severity": "high"}],
+        })
+        current = _make_baseline_result({
+            "shadow": [
+                {"title": "SHADOW_AGENT_DETECTED", "severity": "high"},
+                {"title": "SHADOW_AGENT_DETECTED", "severity": "high"},
+            ],
+        })
+        result = run_watchdog(current, baseline)
+        # 不是全新 key，new_findings 为空；但数量增长必须算高风险漂移
+        assert len(result["new_findings"]) == 0
+        assert result["summary"]["growing_high"] == 1
+        assert result["has_new_high"] is True
+
+    def test_medium_count_increment_no_high_alert(self):
+        """medium 数量增长不触发 high 报警（不误报）。"""
+        baseline = _make_baseline_result({
+            "graph": [{"title": "unclosed tasks detected", "severity": "medium"}],
+        })
+        current = _make_baseline_result({
+            "graph": [
+                {"title": "unclosed tasks detected", "severity": "medium"},
+                {"title": "unclosed tasks detected", "severity": "medium"},
+            ],
+        })
+        result = run_watchdog(current, baseline)
+        assert result["summary"]["growing_high"] == 0
+        assert result["has_new_high"] is False
+
 
 # ── Resolved findings ─────────────────────────────────────────────────
 
