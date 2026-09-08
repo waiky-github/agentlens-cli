@@ -28,3 +28,51 @@ class CostModel:
 
 # Default instance
 DEFAULT_COST_MODEL = CostModel()
+
+# ── Shadow Agent Detection defaults ──────────────────────────────
+
+# Known/registered agents extracted from well-known multi-agent patterns.
+# Override with --known-agents a,b,c in the CLI.
+DEFAULT_KNOWN_AGENTS = [
+    "agent:main",
+    "team-leader",
+    "admin",
+    "collector",
+    "graph-builder",
+    "decision-auditor",
+    "cost-analyst",
+    "evidence-verifier",
+]
+
+# Dangerous tools that require explicit approval before execution.
+# Override with --dangerous-tools x,y,z in the CLI.
+DEFAULT_DANGEROUS_TOOLS = [
+    "shell",
+    "bash",
+    "rm",
+    "delete",
+    "drop",
+    "exec",
+    "system",
+    "sudo",
+    "kill",
+    "shutdown",
+    "reboot",
+    "write_file",
+    "overwrite",
+    "truncate",
+]
+
+# Agent role → permitted tools mapping for privilege boundary detection.
+# If an agent invokes a tool outside its permitted set, it's a boundary violation.
+# An empty value means "all tools allowed" (leader/admin).
+AGENT_ROLE_TOOLS = {
+    "leader": [],
+    "admin": [],
+    "collector": ["fetch", "get", "read", "list", "search", "ls", "cat", "grep", "find"],
+    "builder": ["build", "compile", "render", "transform", "merge", "compose"],
+    "auditor": ["audit", "check", "verify", "validate", "diff", "compare", "scan"],
+    "analyst": ["analyze", "cost", "calculate", "aggregate", "query", "report", "stats"],
+    "verifier": ["verify", "check", "validate", "hash", "digest", "compare"],
+    "worker": ["fetch", "get", "read", "list", "search"],
+}

@@ -259,6 +259,7 @@ class _HtmlBuilder:
         decision = result.get("decision", {})
         evidence = result.get("evidence", {})
         cost = result.get("cost", {})
+        shadow = result.get("shadow", {})
 
         audit_id = graph.get("graph_id", decision.get("audit_id", "N/A"))
         events_loaded = result.get("events_loaded", 0)
@@ -267,6 +268,8 @@ class _HtmlBuilder:
         bypass = decision.get("approval_bypass_detected", False)
         bypass_text = "检测到审批绕过" if bypass else "未检测到审批绕过"
         avoidable = self._pct(cost.get("avoidable_cost_ratio", 0))
+        shadow_count = len(shadow.get("findings", []))
+        shadow_text = f"影子智能体发现: {shadow_count}" if shadow_count else "无影子智能体"
 
         return (
             f'<div class="header">'
@@ -287,6 +290,8 @@ class _HtmlBuilder:
             f'<div class="card-value">{completeness}</div></div>'
             f'<div class="card"><div class="card-label">可避免成本占比</div>'
             f'<div class="card-value">{avoidable}</div></div>'
+            f'<div class="card"><div class="card-label">影子智能体</div>'
+            f'<div class="card-value">{shadow_text}</div></div>'
             f'</div></div>'
         )
 
@@ -395,6 +400,28 @@ class _HtmlBuilder:
             f'</div>'
         )
 
+    def _section_shadow(self, shadow: dict) -> str:
+        findings = shadow.get("findings", [])
+        shadow_count = len(findings)
+        shadow_banner = ""
+        if shadow_count > 0:
+            shadow_banner = (
+                '<div class="bypass-banner" style="background:#fd7e14">'
+                f'*** 检测到 {shadow_count} 个影子智能体相关发现 ***</div>'
+            )
+        return (
+            f'<div class="section" id="layer-shadow">'
+            f'<h2>5. 影子智能体检测</h2>'
+            f'{shadow_banner}'
+            f'<div class="metrics-bar">'
+            f'<span>摘要: <strong>{self._esc(shadow.get("summary", "no findings"))}</strong></span>'
+            f'<span>发现数: <strong>{shadow_count}</strong></span>'
+            f'</div>'
+            f'<h3>影子智能体发现</h3>'
+            f'{self._render_findings(findings)}'
+            f'</div>'
+        )
+
     def _section_footer(self) -> str:
         return (
             f'<div class="footer">'
@@ -470,6 +497,7 @@ tr:hover{background:#f8f9fa}
             + self._section_decision(self._r.get("decision", {}))
             + self._section_evidence(self._r.get("evidence", {}))
             + self._section_cost(self._r.get("cost", {}))
+            + self._section_shadow(self._r.get("shadow", {}))
             + self._section_footer()
             + "</div>\n</body>\n</html>"
         )
