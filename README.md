@@ -38,6 +38,9 @@ agentlens-audit audit --input events.jsonl --json
 # Custom pricing
 agentlens-audit audit --input events.jsonl --json --input-price 1.5 --output-price 5.0
 
+# HTML report (self-contained, offline-capable)
+agentlens-audit audit --input events.jsonl --format html --output report.html
+
 # Works with nested JSON (e.g. approval_bypass.json), JSONL, and gateway.log
 agentlens-audit audit --input examples/approval_bypass.json --json
 agentlens-audit audit --input examples/multi_agent_task_events_v2.jsonl --json

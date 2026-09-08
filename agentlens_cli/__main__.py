@@ -215,6 +215,14 @@ def build_cmd_audit(subparsers):
         help="Output results as JSON (default: human-readable text)",
     )
     p.add_argument(
+        "--format", choices=["json", "html"], default=None,
+        help="Output format: 'json' for JSON, 'html' for self-contained HTML report",
+    )
+    p.add_argument(
+        "--output", "-o", default=None,
+        help="Write output to file (default: stdout)",
+    )
+    p.add_argument(
         "--input-price", type=float, default=2.4,
         help="Input token price per 1M tokens (default: 2.4 CNY)",
     )
@@ -350,6 +358,17 @@ def cmd_audit(args):
     }
 
     if args.json:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    elif args.format == "html":
+        from .report import render_html
+        html = render_html(result, input_path)
+        if args.output:
+            with open(args.output, "w", encoding="utf-8") as fh:
+                fh.write(html)
+            print(f"HTML report written to {args.output}", file=sys.stderr)
+        else:
+            print(html)
+    elif args.format == "json":
         print(json.dumps(result, indent=2, ensure_ascii=False))
     else:
         print(format_audit_human(result))
