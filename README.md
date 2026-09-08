@@ -16,6 +16,7 @@ AgentLens Audit 让任何多 Agent 系统（Hermes / CrewAI / AutoGen / LangGrap
 | 💰 cost | 成本治理 | 按 Agent/任务成本归因 + 浪费检测（大输出注入/重复调用），实测可避免成本 63-76% |
 | 👻 shadow | 影子智能体 | 未登记 Agent / 未授权工具调用 / 权限越界检测 |
 | ⚖️ compliance | 决策权限合规 | 用户本人决策/用户授权/自主决策三分法 + 知情权 + 最终否决权 |
+| 📋 regulations | 合规条款映射 | 审计发现自动关联法规条款（网信办《实施意见》/ EU AI Act /《拟人化互动办法》） |
 | 🚪 gate | CI 集成 | 违规超阈值 → 非零退出码，审计当 lint 挂 CI |
 
 ## 🚀 快速开始

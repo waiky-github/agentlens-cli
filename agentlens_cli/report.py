@@ -263,6 +263,26 @@ class _HtmlBuilder:
                 rows.append(
                     f'<p class="finding-meta">预估浪费: {waste:.6f} CNY</p>'
                 )
+            # Regulation references
+            regs = f.get("regulation_refs", [])
+            if regs:
+                rows.append('<div class="finding-regs">')
+                rows.append('<span class="finding-regs-label">法规依据:</span>')
+                rows.append('<ul class="regs-list">')
+                for ref in regs:
+                    regulation = ref.get("regulation", "unknown")
+                    article = ref.get("article", "")
+                    clause = ref.get("clause", "")
+                    note = ref.get("note", "")
+                    if note:
+                        rows.append(
+                            f"<li>{self._esc(regulation)} — {self._esc(note)}</li>"
+                        )
+                    else:
+                        rows.append(
+                            f"<li>{self._esc(regulation)} — {self._esc(article)}: {self._esc(clause)}</li>"
+                        )
+                rows.append("</ul></div>")
             rows.append("</div>")
         return "\n".join(rows)
 
@@ -464,6 +484,54 @@ class _HtmlBuilder:
             f'</div>'
         )
 
+    def _section_compliance_mapping(self) -> str:
+        """Build a compliance mapping summary section showing which regulations were referenced."""
+        # Collect all unique regulation references across all findings
+        layer_keys = ["graph", "decision", "evidence", "cost", "shadow", "compliance"]
+        seen_regs = set()
+        reg_rows = []
+        for key in layer_keys:
+            layer = self._r.get(key, {})
+            if not isinstance(layer, dict):
+                continue
+            for f in layer.get("findings", []):
+                for ref in f.get("regulation_refs", []):
+                    reg_key = (ref.get("regulation", ""), ref.get("article", ""), ref.get("clause", ""), ref.get("note", ""))
+                    if reg_key not in seen_regs:
+                        seen_regs.add(reg_key)
+                        regulation = ref.get("regulation", "unknown")
+                        article = ref.get("article", "")
+                        clause = ref.get("clause", "")
+                        note = ref.get("note", "")
+                        if note:
+                            reg_rows.append(
+                                f"<tr><td>{self._esc(regulation)}</td>"
+                                f"<td>—</td><td>{self._esc(note)}</td></tr>"
+                            )
+                        else:
+                            reg_rows.append(
+                                f"<tr><td>{self._esc(regulation)}</td>"
+                                f"<td>{self._esc(article)}</td><td>{self._esc(clause)}</td></tr>"
+                            )
+        if not reg_rows:
+            return ""
+
+        return (
+            f'<div class="section" id="layer-compliance-mapping">'
+            f'<h2>7. 合规条款映射</h2>'
+            f'<div class="metrics-bar">'
+            f'<span>引用的法规条款: <strong>{len(reg_rows)}</strong></span>'
+            f'<span>主要法规: 网信办《实施意见》(2026-05-08) / EU AI Act (2024/1689) / 《拟人化互动办法》(2026-07-15)</span>'
+            f'</div>'
+            f'<p style="font-size:12px;color:#888;margin-bottom:12px">'
+            f'以下为本次审计发现涉及的所有法规条款汇总。每条发现均已标注对应的法规依据。'
+            f'</p>'
+            f'<table><thead><tr>'
+            f'<th>法规文件</th><th>条款</th><th>要求</th>'
+            f'</tr></thead><tbody>{"".join(reg_rows)}</tbody></table>'
+            f'</div>'
+        )
+
     def _section_footer(self) -> str:
         return (
             f'<div class="footer">'
@@ -522,6 +590,11 @@ tr:hover{background:#f8f9fa}
 .footer{margin-top:30px;padding:20px;text-align:center;color:#888;font-size:12px;
   border-top:1px solid #ddd}
 .disclaimer{color:#aaa;font-size:11px;margin-top:6px}
+.finding-regs{margin-top:8px;padding:8px 10px;background:#f0f4ff;border-radius:4px;
+  font-size:11px;color:#334}
+.finding-regs-label{font-weight:700;color:#0066cc}
+.regs-list{margin:4px 0 0 16px;padding:0;list-style:disc}
+.regs-list li{margin:2px 0;line-height:1.4}
 """
 
     # ── build ────────────────────────────────────────────────────
@@ -541,6 +614,7 @@ tr:hover{background:#f8f9fa}
             + self._section_cost(self._r.get("cost", {}))
             + self._section_shadow(self._r.get("shadow", {}))
             + self._section_compliance(self._r.get("compliance", {}))
+            + self._section_compliance_mapping()
             + self._section_footer()
             + "</div>\n</body>\n</html>"
         )
