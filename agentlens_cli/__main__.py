@@ -13,6 +13,7 @@ from .graph import build_graph
 from .decision import audit_decisions
 from .evidence import verify_evidence
 from .shadow import detect_shadow_agents
+from .compliance import audit_compliance
 
 
 def _load_events(input_path: str) -> list[dict]:
@@ -124,7 +125,7 @@ def format_audit_human(result: dict) -> str:
     """Format full audit results as human-readable text."""
     lines = []
     lines.append("=" * 60)
-    lines.append("  AgentLens Full Audit Report")
+    lines.append("  AgentLens Full Audit Report (Six-Layer)")
     lines.append("=" * 60)
     lines.append(f"  Events loaded: {result['events_loaded']}")
     lines.append("")
@@ -184,6 +185,13 @@ def format_audit_human(result: dict) -> str:
     lines.append(f"  Summary: {shadow.get('summary', 'no shadow agent findings')}")
     lines.append(_format_findings_block("Shadow Findings", shadow.get("findings", [])))
 
+    # Layer 6: Compliance
+    compliance = result.get("compliance", {})
+    lines.append("")
+    lines.append("--- 6. Decision Authority Compliance ---")
+    lines.append(f"  Summary: {compliance.get('summary', 'no findings')}")
+    lines.append(_format_findings_block("Compliance Findings", compliance.get("findings", [])))
+
     lines.append("")
     lines.append("=" * 60)
     return "\n".join(lines)
@@ -213,7 +221,7 @@ def build_cmd_cost(subparsers):
 
 def build_cmd_audit(subparsers):
     """Register the `audit` subcommand."""
-    p = subparsers.add_parser("audit", help="Full four-layer audit (graph + decision + evidence + cost)")
+    p = subparsers.add_parser("audit", help="Full six-layer audit (graph + decision + evidence + cost + shadow + compliance)")
     p.add_argument(
         "--input", "-i", required=True,
         help="Path to input file (JSONL event stream, nested JSON, or Hermes gateway.log)",
@@ -297,7 +305,7 @@ def cmd_cost(args):
 
 
 def cmd_audit(args):
-    """Execute the `audit` subcommand — full four-layer audit."""
+    """Execute the `audit` subcommand — full six-layer audit."""
     input_path = args.input
     if not os.path.isfile(input_path):
         print(f"Error: input file not found: {input_path}", file=sys.stderr)
@@ -339,6 +347,9 @@ def cmd_audit(args):
 
     # Layer 5: Shadow Agent Detection
     shadow_findings = detect_shadow_agents(events, known_agents, dangerous_tools)
+
+    # Layer 6: Compliance — Decision Authority
+    compliance_data = audit_compliance(events)
 
     total_cost = cost_attribution["total_cost"]
     total_wasted = governance_data["total_est_wasted_cost"]
@@ -389,6 +400,11 @@ def cmd_audit(args):
                 else "no shadow agent findings"
             ),
             "findings": shadow_findings,
+        },
+        "compliance": {
+            "summary": compliance_data["summary"],
+            "findings": compliance_data["findings"],
+            "decision_boundary_model": compliance_data["decision_boundary_model"],
         },
     }
 

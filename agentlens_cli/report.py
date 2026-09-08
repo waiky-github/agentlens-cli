@@ -260,6 +260,7 @@ class _HtmlBuilder:
         evidence = result.get("evidence", {})
         cost = result.get("cost", {})
         shadow = result.get("shadow", {})
+        compliance = result.get("compliance", {})
 
         audit_id = graph.get("graph_id", decision.get("audit_id", "N/A"))
         events_loaded = result.get("events_loaded", 0)
@@ -270,6 +271,8 @@ class _HtmlBuilder:
         avoidable = self._pct(cost.get("avoidable_cost_ratio", 0))
         shadow_count = len(shadow.get("findings", []))
         shadow_text = f"影子智能体发现: {shadow_count}" if shadow_count else "无影子智能体"
+        compliance_count = len(compliance.get("findings", []))
+        compliance_text = f"合规发现: {compliance_count}" if compliance_count else "合规无发现"
 
         return (
             f'<div class="header">'
@@ -292,6 +295,8 @@ class _HtmlBuilder:
             f'<div class="card-value">{avoidable}</div></div>'
             f'<div class="card"><div class="card-label">影子智能体</div>'
             f'<div class="card-value">{shadow_text}</div></div>'
+            f'<div class="card"><div class="card-label">决策权限合规</div>'
+            f'<div class="card-value">{compliance_text}</div></div>'
             f'</div></div>'
         )
 
@@ -422,6 +427,29 @@ class _HtmlBuilder:
             f'</div>'
         )
 
+    def _section_compliance(self, compliance: dict) -> str:
+        findings = compliance.get("findings", [])
+        findings_count = len(findings)
+        high_count = sum(1 for f in findings if f.get("severity") == "high")
+        compliance_banner = ""
+        if high_count > 0:
+            compliance_banner = (
+                '<div class="bypass-banner" style="background:#dc3545">'
+                f'*** 检测到 {high_count} 个高风险决策权限合规问题 ***</div>'
+            )
+        return (
+            f'<div class="section" id="layer-compliance">'
+            f'<h2>6. 决策权限合规</h2>'
+            f'{compliance_banner}'
+            f'<div class="metrics-bar">'
+            f'<span>摘要: <strong>{self._esc(compliance.get("summary", "no findings"))}</strong></span>'
+            f'<span>发现数: <strong>{findings_count}</strong></span>'
+            f'</div>'
+            f'<h3>合规发现</h3>'
+            f'{self._render_findings(findings)}'
+            f'</div>'
+        )
+
     def _section_footer(self) -> str:
         return (
             f'<div class="footer">'
@@ -498,6 +526,7 @@ tr:hover{background:#f8f9fa}
             + self._section_evidence(self._r.get("evidence", {}))
             + self._section_cost(self._r.get("cost", {}))
             + self._section_shadow(self._r.get("shadow", {}))
+            + self._section_compliance(self._r.get("compliance", {}))
             + self._section_footer()
             + "</div>\n</body>\n</html>"
         )
