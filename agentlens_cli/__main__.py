@@ -14,6 +14,7 @@ from .decision import audit_decisions
 from .evidence import verify_evidence
 from .shadow import detect_shadow_agents
 from .compliance import audit_compliance
+from .integrity import build_integrity_block, embed_integrity_meta, verify_report
 
 
 def _load_events(input_path: str) -> list[dict]:
@@ -270,6 +271,10 @@ def build_cmd_audit(subparsers):
         "--max-medium", type=int, default=None,
         help="Max allowed medium-severity findings before gate fails (default: no limit)",
     )
+    p.add_argument(
+        "--prev-hash", default=None,
+        help="Previous report hash to chain this report onto (tamper-evident audit trail)",
+    )
     p.set_defaults(func=cmd_audit)
 
 
@@ -425,10 +430,14 @@ def cmd_audit(args):
     }
 
     if args.json:
+        result["integrity"] = build_integrity_block(result, args.prev_hash)
         print(json.dumps(result, indent=2, ensure_ascii=False))
     elif args.format == "html":
         from .report import render_html
+        from .integrity import hash_content
         html = render_html(result, input_path)
+        integrity = build_integrity_block(result, args.prev_hash, hash_content(html))
+        html = embed_integrity_meta(html, integrity)
         if args.output:
             with open(args.output, "w", encoding="utf-8") as fh:
                 fh.write(html)
@@ -436,6 +445,7 @@ def cmd_audit(args):
         else:
             print(html)
     elif args.format == "json":
+        result["integrity"] = build_integrity_block(result, args.prev_hash)
         print(json.dumps(result, indent=2, ensure_ascii=False))
     else:
         print(format_audit_human(result))
@@ -771,8 +781,36 @@ def cmd_demo(args):
     }
 
     html = render_html(result, demo_input)
+    from .integrity import hash_content
+    integrity = build_integrity_block(result, None, hash_content(html))
+    html = embed_integrity_meta(html, integrity)
     _write_output(args.output, html)
     print(f"Demo report generated: {args.output}")
+
+
+def build_cmd_verify(subparsers):
+    """Register the `verify` subcommand."""
+    p = subparsers.add_parser("verify", help="Verify a report's tamper-evident integrity")
+    p.add_argument("--report", required=True, help="Path to HTML report to verify")
+    p.set_defaults(func=cmd_verify)
+
+
+def cmd_verify(args):
+    """Execute the `verify` subcommand."""
+    path = args.report
+    if not os.path.isfile(path):
+        print(f"Error: report file not found: {path}", file=sys.stderr)
+        sys.exit(1)
+    with open(path, "r", encoding="utf-8") as fh:
+        html = fh.read()
+    res = verify_report(html)
+    if res["verified"]:
+        print(f"VERIFIED: report integrity OK (sha256 {res['expected']})")
+    else:
+        print(f"TAMPERED: {res['reason']}", file=sys.stderr)
+        print(f"  expected: {res.get('expected')}", file=sys.stderr)
+        print(f"  actual:   {res.get('actual')}", file=sys.stderr)
+        sys.exit(1)
 
 
 def main():
@@ -791,6 +829,7 @@ def main():
     build_cmd_audit(subparsers)
     build_cmd_diff(subparsers)
     build_cmd_demo(subparsers)
+    build_cmd_verify(subparsers)
 
     args = parser.parse_args()
     if args.command is None:
