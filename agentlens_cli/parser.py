@@ -2,6 +2,7 @@
 
 import json
 import re
+import sys
 from typing import Iterator
 
 
@@ -18,7 +19,7 @@ def parse_jsonl(path: str) -> Iterator[dict]:
             except json.JSONDecodeError:
                 skipped += 1
     if skipped:
-        print(f"[gateway.log parser] skipped {skipped} unparseable lines", flush=True)
+        print(f"[gateway.log parser] skipped {skipped} unparseable lines", flush=True, file=sys.stderr)
 
 
 # Patterns for Hermes gateway.log lines
@@ -169,4 +170,5 @@ def parse_gateway_log(path: str) -> Iterator[dict]:
         print(
             f"[gateway.log parser] skipped {skipped} unparseable lines",
             flush=True,
+            file=sys.stderr,
         )
