@@ -11,5 +11,8 @@ requires-python = ">=3.9"
 [project.scripts]
 agentlens-audit = "agentlens_cli.__main__:main"
 
+[project.optional-dependencies]
+test = ["pytest"]
+
 [tool.setuptools.packages.find]
 include = ["agentlens_cli*"]
