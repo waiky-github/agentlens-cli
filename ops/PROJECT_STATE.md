@@ -16,11 +16,15 @@
 | **GitHub** | ✅ 仓库 waiky-github/agentlens-cli（公开），33 文件经 API 上传在线 | github.com/waiky-github/agentlens-cli |
 | GitHub git 历史 | ⚠️ 未 push（github.com:443 被墙，api.github.com 通）→ 待网络恢复/代理后 git push 补历史 | — |
 
-## 功能现状（七层审计）
+## 功能现状（七层审计 + 扩展）
 - 输入：统一事件流 JSONL / Hermes gateway.log / CrewAI / AutoGen / LangGraph（converters/）
 - 七层：graph 协作图谱 / decision 决策审计 / evidence 证据链 / cost 成本治理 / shadow 影子智能体 / compliance 决策权限合规 / gate CI 门禁
-- 命令：audit（--json / --format html）/ cost / diff（baseline vs current）/ demo / --gate（退出码）
-- 测试：tests/ pytest 60 用例全绿（公共 venv python -m pytest tests/ -v）
+- 命令：audit（--json / --format html）/ cost / diff（baseline vs current）/ demo / verify（防篡改验真）/ regs（法规映射查询）/ --gate（退出码）
+- 扩展功能（2026-09-08 N1/N2/N3）：
+  - **N1 报告防篡改**：integrity.py，SHA-256 文档哈希 + 哈希链，verify 子命令验真（篡改 exit 1）
+  - **N3 合规条款映射**：regulations.py，439 findings 映射网信办《实施意见》/EU AI Act/拟人化办法，HTML 第 7 节汇总表
+  - **N2 MCP server**：mcp_server.py，FastMCP 4 工具（audit/cost_analysis/verify_report/list_regulations），stdio + streamable-http 双传输
+- 测试：tests/ pytest 75 用例全绿（公共 venv python -m pytest tests/ -v）
 
 ## 关键事实（避免重踩）
 - **PyPI 包名 `agentlens-cli` 已被他人占用**（发布 403）→ 改名 `agentlens-audit`（2026-09-08 实测 404 可用后发布）
@@ -42,9 +46,9 @@
 ## 待办
 - [ ] GitHub git 历史 push（等网络恢复/代理：`git remote add origin https://github.com/waiky-github/agentlens-cli.git && git push -u origin main`，需 http.version HTTP/1.1 已全局设）
 - [ ] README 英文版（可选，对外分发用）
-- [ ] F6 合规条款映射（延后，发政策解读文时一起做）
-- [ ] 版本 0.2.0（视反馈迭代）
+- [ ] 版本 0.2.0（N1/N2/N3 已就绪，视反馈迭代发布）
 
 ## 里程碑
 - 2026-09-08：agentlens-cli 从零到发布（Trae 4 轮任务 + 我验真 + 7 功能批次，10 次 commit）
 - 2026-09-08：PyPI agentlens-audit 0.1.0 发布 + GitHub 仓库上线 + 60 测试全绿
+- 2026-09-08：N1 报告防篡改（92c17bb）+ N3 合规条款映射（aadfb80，75 测试）+ N2 MCP server（caffd3c，4 工具 stdio/http 双传输）全部完成并验真
