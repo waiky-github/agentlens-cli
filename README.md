@@ -1,8 +1,8 @@
 # AgentLens CLI
 
-Multi-agent governance toolkit — five-layer audit CLI covering collaboration graph, decision audit, evidence chain, cost governance, and shadow agent detection.
+Multi-agent governance toolkit — six-layer audit CLI covering collaboration graph, decision audit, evidence chain, cost governance, shadow agent detection, and decision authority compliance.
 
-## Five-Layer Audit
+## Six-Layer Audit
 
 | Layer | Module | Description |
 |-------|--------|-------------|
@@ -11,6 +11,7 @@ Multi-agent governance toolkit — five-layer audit CLI covering collaboration g
 | 3. Evidence Chain | `evidence.py` | Verifies every event/claim has a reachable `evidence_ref`. Outputs completeness ratio and missing-evidence list. |
 | 4. Cost Layer | `governance.py` + `attribution.py` | Token attribution + waste detection (large-output injection, repeated calls, context bloat, etc.). |
 | 5. Shadow Agent Detection | `shadow.py` | Detects unregistered agents (`SHADOW_AGENT_DETECTED`), unauthorized tool calls (`UNAUTHORIZED_TOOL_CALL`), and privilege boundary violations (`PRIVILEGE_BOUNDARY_VIOLATION`). Compliant with 网信办《智能体规范应用与创新发展实施意见》(2026-05). |
+| 6. Decision Authority Compliance | `compliance.py` | Enforces Article 6 of 网信办《实施意见》(2026-05): classifies actions into USER_ONLY/USER_AUTHORIZED/AGENT_AUTONOMOUS, detects `USER_ONLY_VIOLATION`, `HIGH_RISK_AUTONOMOUS_DECISION`, `MISSING_USER_AUTHORIZATION`, and `MISSING_INFORMED_CONSENT`. |
 
 ## Install
 
@@ -27,7 +28,7 @@ python -m agentlens_cli audit --input examples/hermes_gateway_events.jsonl
 
 ## Usage
 
-### `audit` — Full Five-Layer Audit
+### `audit` — Full Six-Layer Audit
 
 ```bash
 # Human-readable report (default)
@@ -101,6 +102,9 @@ Key fields in JSON output (audit subcommand):
 | `cost.findings` | Waste detection findings |
 | `shadow.summary` | Shadow agent detection summary |
 | `shadow.findings` | Shadow agent findings: `SHADOW_AGENT_DETECTED`, `UNAUTHORIZED_TOOL_CALL`, `PRIVILEGE_BOUNDARY_VIOLATION` |
+| `compliance.summary` | Compliance findings summary |
+| `compliance.findings` | Compliance findings: `USER_ONLY_VIOLATION`, `HIGH_RISK_AUTONOMOUS_DECISION`, `MISSING_USER_AUTHORIZATION`, `MISSING_INFORMED_CONSENT` |
+| `compliance.decision_boundary_model` | Configured action classification tables (USER_ONLY/USER_AUTHORIZED/AGENT_AUTONOMOUS) |
 
 Each finding follows the structured format: `severity`, `title`, `evidence_refs`, `recommendation`, `est_impact` (where applicable).
 
@@ -154,6 +158,22 @@ python -m agentlens_cli audit --input examples/multi_agent_task_events_v2.jsonl 
 
 Expected: `shadow.findings` is empty (0 findings) — legitimate agents should not trigger shadow detection.
 
+### Scenario 7: Compliance — Decision Authority Violations
+
+```bash
+python -m agentlens_cli audit --input examples/compliance_violations.jsonl --json
+```
+
+Expected: `compliance.findings` contains `USER_ONLY_VIOLATION` (high), `HIGH_RISK_AUTONOMOUS_DECISION` (high), `MISSING_USER_AUTHORIZATION` (medium), `MISSING_INFORMED_CONSENT` (info) — at least 1 of each type.
+
+### Scenario 8: Compliance — Hermes Gateway (no approval stream)
+
+```bash
+python -m agentlens_cli audit --input examples/hermes_gateway_events.jsonl --json
+```
+
+Expected: Hermes data has no approval events, so compliance layer should NOT produce `HIGH_RISK_AUTONOMOUS_DECISION` at severity high. It may produce `AUDIT_GAP_NO_APPROVAL_STREAM` at info level.
+
 ## Example Data
 
 - `examples/hermes_gateway_events.jsonl` — Real Hermes gateway event stream (~11K events)
@@ -161,3 +181,4 @@ Expected: `shadow.findings` is empty (0 findings) — legitimate agents should n
 - `examples/multi_agent_task_events_v2.jsonl` — Full 5-worker pipeline with retries, conflict resolution, L3 approval (20 events)
 - `examples/multi_agent_task_events.jsonl` — Gaps scenario: 3 dispatched, only 1 completed (5 events)
 - `examples/shadow_agent_events.jsonl` — Shadow agent detection scenario: unregistered agent, unauthorized shell call, privilege escalation (6 events)
+- `examples/compliance_violations.jsonl` — Compliance violation scenario: USER_ONLY violation, L3 autonomous decision, missing authorization, missing consent (5 events)
