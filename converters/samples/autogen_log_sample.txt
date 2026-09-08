@@ -1,0 +1,18 @@
+# AutoGen conversation log sample (JSON Lines)
+# Based on AutoGen public documentation (https://microsoft.github.io/autogen/)
+# Format: One JSON object per line, each representing a conversation event.
+# This sample represents a 2-agent conversation (assistant + user_proxy) with tool calls and approval.
+
+{"timestamp": "2026-09-08T10:00:00Z", "type": "message", "source": "user_proxy", "role": "user", "content": "Please research the Q3 2026 cloud pricing trends for AWS, Azure, and GCP, and create a summary report."}
+{"timestamp": "2026-09-08T10:00:02Z", "type": "message", "source": "assistant", "role": "assistant", "content": "I'll research the cloud pricing trends. Let me search for the latest data.", "model": "gpt-4o", "tokens_in": 85, "tokens_out": 22}
+{"timestamp": "2026-09-08T10:00:05Z", "type": "tool_call", "source": "assistant", "tool": "web_search", "arguments": {"query": "Q3 2026 cloud pricing AWS Azure GCP comparison"}, "output": "Found 15 results. AWS reduced EC2 by 5%, Azure introduced new reserved instance tiers, GCP announced sustained-use discounts..."}
+{"timestamp": "2026-09-08T10:00:10Z", "type": "message", "source": "assistant", "role": "assistant", "content": "I found some pricing data. Let me also check for any recent announcements.", "model": "gpt-4o", "tokens_in": 4520, "tokens_out": 18}
+{"timestamp": "2026-09-08T10:00:12Z", "type": "tool_call", "source": "assistant", "tool": "web_search", "arguments": {"query": "cloud pricing announcements September 2026"}, "output": "AWS announced price cuts, Azure blog post on new tiers, GCP updated pricing page..."}
+{"timestamp": "2026-09-08T10:00:18Z", "type": "message", "source": "assistant", "role": "assistant", "content": "Now let me generate the report.", "model": "gpt-4o", "tokens_in": 3800, "tokens_out": 10}
+{"timestamp": "2026-09-08T10:00:20Z", "type": "tool_call", "source": "assistant", "tool": "generate_report", "arguments": {"title": "Q3 2026 Cloud Pricing Trends", "format": "markdown"}, "output": "# Q3 2026 Cloud Pricing Trends\n\n## AWS\n- Reduced EC2 by 5%\n- New Savings Plans\n\n## Azure\n- New reserved instance tiers\n- Spot VM discounts\n\n## GCP\n- Sustained-use discounts\n- Committed use contracts\n\n## Summary\nAll three major providers are competing aggressively on price..."}
+{"timestamp": "2026-09-08T10:00:25Z", "type": "message", "source": "assistant", "role": "assistant", "content": "I have completed the research and generated the report. Would you like me to publish it to the team?", "model": "gpt-4o", "tokens_in": 2500, "tokens_out": 25}
+{"timestamp": "2026-09-08T10:00:28Z", "type": "approval", "source": "user_proxy", "action": "approved", "message": "Yes, please publish the report to the team channel."}
+{"timestamp": "2026-09-08T10:00:30Z", "type": "tool_call", "source": "assistant", "tool": "publish_to_slack", "arguments": {"channel": "team-reports", "content": "Q3 2026 Cloud Pricing Trends report"}, "output": "Message sent to #team-reports"}
+{"timestamp": "2026-09-08T10:00:32Z", "type": "task_completion", "source": "assistant", "task": "research_cloud_pricing", "target": "user_proxy"}
+
+# Empty line and comment line (should be skipped)
