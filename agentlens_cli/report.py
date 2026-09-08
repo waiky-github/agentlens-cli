@@ -27,6 +27,20 @@ def render_html(result: dict, input_path: str = "") -> str:
     return _HtmlBuilder(result, input_path).build()
 
 
+def render_diff_html(diff: dict, baseline_path: str, current_path: str) -> str:
+    """Render a self-contained HTML diff report comparing two audit runs.
+
+    Args:
+        diff: The diff dict with baseline, current, and deltas keys.
+        baseline_path: Path to the baseline input file.
+        current_path: Path to the current input file.
+
+    Returns:
+        Complete HTML document as a string.
+    """
+    return _DiffHtmlBuilder(diff, baseline_path, current_path).build()
+
+
 # ──────────────────────────────────────────────────────────────────────
 # Internal HTML builder
 # ──────────────────────────────────────────────────────────────────────
@@ -529,4 +543,141 @@ tr:hover{background:#f8f9fa}
             + self._section_compliance(self._r.get("compliance", {}))
             + self._section_footer()
             + "</div>\n</body>\n</html>"
+        )
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Diff HTML builder
+# ──────────────────────────────────────────────────────────────────────
+
+class _DiffHtmlBuilder:
+    def __init__(self, diff: dict, baseline_path: str, current_path: str):
+        self._d = diff
+        self._baseline = baseline_path
+        self._current = current_path
+        self._now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+    def _esc(self, text) -> str:
+        return html.escape(str(text))
+
+    def _delta_class(self, val) -> str:
+        if val > 0:
+            return "delta-positive"
+        elif val < 0:
+            return "delta-negative"
+        return "delta-zero"
+
+    def _delta_sign(self, raw_val, display_val: str) -> str:
+        if isinstance(raw_val, (int, float)) and raw_val > 0:
+            return f"+{display_val}"
+        return str(display_val)
+
+    def _metric_row(self, label: str, b_val, c_val, delta_raw, delta_display: str = None) -> str:
+        if delta_display is None:
+            delta_display = str(delta_raw)
+        return (
+            f"<tr><td>{label}</td>"
+            f"<td class='num'>{b_val}</td>"
+            f"<td class='num'>{c_val}</td>"
+            f"<td class='num {self._delta_class(delta_raw)}'>{self._delta_sign(delta_raw, delta_display)}</td></tr>"
+        )
+
+    def _pct(self, val: float) -> str:
+        return f"{val * 100:.1f}%"
+
+    def _cost_fmt(self, val: float) -> str:
+        return f"{val:.6f} CNY"
+
+    def build(self) -> str:
+        baseline = self._d.get("baseline", {})
+        current = self._d.get("current", {})
+        deltas = self._d.get("deltas", {})
+
+        rows = []
+        rows.append(self._metric_row("Events Loaded",
+            baseline.get("events_loaded", 0), current.get("events_loaded", 0),
+            deltas.get("events_loaded", 0)))
+        rows.append(self._metric_row("Total Cost",
+            self._cost_fmt(baseline.get("total_cost", 0)),
+            self._cost_fmt(current.get("total_cost", 0)),
+            deltas.get("total_cost", 0), self._cost_fmt(deltas.get("total_cost", 0))))
+        rows.append(self._metric_row("Avoidable Cost Ratio",
+            self._pct(baseline.get("avoidable_cost_ratio", 0)),
+            self._pct(current.get("avoidable_cost_ratio", 0)),
+            deltas.get("avoidable_cost_ratio", 0), self._pct(deltas.get("avoidable_cost_ratio", 0))))
+        rows.append(self._metric_row("Findings Total",
+            baseline.get("findings_total", 0), current.get("findings_total", 0),
+            deltas.get("findings_total", 0)))
+        rows.append(self._metric_row("  High",
+            baseline.get("findings", {}).get("high", 0),
+            current.get("findings", {}).get("high", 0),
+            deltas.get("findings_high", 0)))
+        rows.append(self._metric_row("  Medium",
+            baseline.get("findings", {}).get("medium", 0),
+            current.get("findings", {}).get("medium", 0),
+            deltas.get("findings_medium", 0)))
+        rows.append(self._metric_row("  Low",
+            baseline.get("findings", {}).get("low", 0),
+            current.get("findings", {}).get("low", 0),
+            deltas.get("findings_low", 0)))
+        rows.append(self._metric_row("  Info",
+            baseline.get("findings", {}).get("info", 0),
+            current.get("findings", {}).get("info", 0),
+            deltas.get("findings_info", 0)))
+        rows.append(self._metric_row("Closure Rate",
+            self._pct(baseline.get("closure_rate", 0)),
+            self._pct(current.get("closure_rate", 0)),
+            deltas.get("closure_rate", 0), self._pct(deltas.get("closure_rate", 0))))
+
+        css = """\
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+  background:#f5f6fa;color:#2d3436;line-height:1.6;padding:20px}
+.container{max-width:900px;margin:0 auto}
+.header{background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;padding:30px;
+  border-radius:12px;margin-bottom:24px}
+.header h1{font-size:24px;margin-bottom:16px}
+.header-meta{display:flex;flex-wrap:wrap;gap:16px;font-size:13px;opacity:0.85}
+.section{background:#fff;border-radius:10px;padding:24px;margin-bottom:20px;
+  box-shadow:0 1px 4px rgba(0,0,0,0.06)}
+.section h2{font-size:18px;border-bottom:2px solid #eee;padding-bottom:10px;margin-bottom:16px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{padding:8px 12px;text-align:left;border-bottom:1px solid #eee}
+th{background:#f8f9fa;font-weight:600;color:#555}
+td.num{text-align:right;font-variant-numeric:tabular-nums}
+tr:hover{background:#f8f9fa}
+.delta-positive{color:#198754;font-weight:700}
+.delta-negative{color:#dc3545;font-weight:700}
+.delta-zero{color:#6c757d}
+.footer{margin-top:30px;padding:20px;text-align:center;color:#888;font-size:12px;
+  border-top:1px solid #ddd}
+.disclaimer{color:#aaa;font-size:11px;margin-top:6px}
+"""
+
+        return (
+            "<!DOCTYPE html>\n<html lang=\"zh-CN\">\n<head>\n"
+            "<meta charset=\"utf-8\">\n"
+            "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n"
+            "<title>AgentLens 审计对比报告</title>\n"
+            f"<style>{css}</style>\n"
+            "</head>\n<body>\n<div class=\"container\">\n"
+            f'<div class="header">'
+            f'<h1>AgentLens 审计对比报告</h1>'
+            f'<div class="header-meta">'
+            f'<span>基线: <strong>{self._esc(self._baseline)}</strong></span>'
+            f'<span>当前: <strong>{self._esc(self._current)}</strong></span>'
+            f'<span>生成时间: <strong>{self._esc(self._now)}</strong></span>'
+            f'</div></div>'
+            f'<div class="section">'
+            f'<h2>指标对比</h2>'
+            f'<table><thead><tr>'
+            f'<th>指标</th><th>基线 (Baseline)</th><th>当前 (Current)</th><th>变化 (Delta)</th>'
+            f'</tr></thead><tbody>{"".join(rows)}</tbody></table>'
+            f'</div>'
+            f'<div class="footer">'
+            f'<p>本报告由 agentlens-cli 自动生成 — {self._esc(self._now)}</p>'
+            f'<p class="disclaimer">免责声明：本对比报告基于两次审计事件流自动分析生成，'
+            f'仅供审计参考，不构成法律或合规建议。所有成本数据均为估算值。</p>'
+            f'</div>'
+            f'</div>\n</body>\n</html>'
         )

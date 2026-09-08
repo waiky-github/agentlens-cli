@@ -59,6 +59,24 @@ agentlens-audit cost --input events.jsonl --json
 agentlens-audit cost --input ~/.hermes/logs/gateway.log
 ```
 
+### `gate` — CI Gate (audit + threshold enforcement)
+
+```bash
+agentlens-audit audit --input events.jsonl --gate --fail-on high --max-high 0
+```
+
+### `diff` — Audit Comparison (baseline vs current)
+
+```bash
+agentlens-audit diff --baseline jan.jsonl --current feb.jsonl --format json
+```
+
+### `demo` — One-Shot HTML Demo Report
+
+```bash
+agentlens-audit demo --output ./agentlens_demo_report.html
+```
+
 ## 框架接入 (Framework Adapters)
 
 AgentLens CLI 提供框架适配器，将主流多 Agent 框架的执行日志转换为统一事件流 JSONL，直接供 `audit` 子命令消费。
