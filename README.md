@@ -42,6 +42,13 @@ agentlens-audit diff --baseline last_month.jsonl --current this_month.jsonl
 
 # CI 门禁：high 级违规数 > 0 即失败
 agentlens-audit audit --input events.jsonl --gate --fail-on high
+
+# 验报告完整性（防篡改哈希链）
+agentlens-audit verify --report report.html
+
+# 查询法规映射 / 修复建议
+agentlens-audit regs --title approval
+agentlens-audit remediations --title shadow
 ```
 
 ## 🔍 Watchdog — 持续审计 / 漂移监控
@@ -91,7 +98,7 @@ agentlens-audit watchdog --input events.jsonl --baseline baseline.json
 ## 🧪 测试
 
 ```bash
-python -m pytest tests/ -v   # 60 用例全绿
+python -m pytest tests/ -v   # 120 用例全绿
 ```
 
 ## 📦 发布
