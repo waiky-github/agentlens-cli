@@ -68,6 +68,58 @@ python -m pytest tests/ -v   # 60 用例全绿
 - GitHub: https://github.com/waiky-github/agentlens-cli
 - License: MIT
 
+## 🔌 MCP Server
+
+AgentLens Audit 支持作为 MCP server 运行，任何 MCP 客户端（Claude / Cursor / Hermes）均可接入。
+
+### 安装
+
+```bash
+pip install agentlens-audit[mcp]
+```
+
+### 客户端配置
+
+**stdio 模式（推荐）**：
+
+```json
+{
+  "mcpServers": {
+    "agentlens-audit": {
+      "command": "python",
+      "args": ["-m", "agentlens_cli.mcp_server"]
+    }
+  }
+}
+```
+
+**HTTP 模式**：
+
+```json
+{
+  "mcpServers": {
+    "agentlens-audit": {
+      "url": "http://127.0.0.1:8765/mcp"
+    }
+  }
+}
+```
+
+启动 HTTP 服务端：
+
+```bash
+python -m agentlens_cli.mcp_server --transport http --port 8765 --host 127.0.0.1
+```
+
+### 可用工具
+
+| 工具 | 说明 |
+|:--|:--|
+| `audit` | 完整七层审计，返回 JSON（含 integrity 块） |
+| `cost_analysis` | 成本分析（总成本 / 可避免成本 / 比例） |
+| `verify_report` | 验报告完整性（防篡改哈希链） |
+| `list_regulations` | 法规映射查询 |
+
 ## 🙏 致谢
 
 审计方法论源自 AgentLens（GOAI 新智基座赛道参赛作品），规则实现参考其 cost-governance / decision-audit / evidence-chain / graph-merge 等 SKILL 定义。

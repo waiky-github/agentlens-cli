@@ -14,6 +14,7 @@ agentlens-audit = "agentlens_cli.__main__:main"
 
 [project.optional-dependencies]
 test = ["pytest"]
+mcp = ["mcp>=1.0"]
 
 [tool.setuptools.packages.find]
 include = ["agentlens_cli*"]
