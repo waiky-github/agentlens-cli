@@ -1,0 +1,29 @@
+# LangGraph execution trace sample (JSON Lines)
+# Based on LangGraph public documentation (https://langchain-ai.github.io/langgraph/)
+# Format: One JSON object per line, representing state transitions in a compiled graph.
+# This sample represents a ReAct-style agent with nodes: agent, tools, and conditional edges.
+
+{"timestamp": "2026-09-08T10:00:00Z", "type": "graph_start", "graph": "react_agent", "input": {"messages": [{"role": "user", "content": "What is the weather in Tokyo and should I bring an umbrella?"}]}}
+
+{"timestamp": "2026-09-08T10:00:01Z", "type": "node_start", "node": "agent", "state_keys": ["messages"]}
+{"timestamp": "2026-09-08T10:00:02Z", "type": "llm_call", "model": "gpt-4o", "tokens_in": 120, "tokens_out": 45, "node": "agent"}
+{"timestamp": "2026-09-08T10:00:03Z", "type": "node_end", "node": "agent", "duration_ms": 2050, "output": {"messages": [{"role": "assistant", "tool_calls": [{"name": "get_weather", "args": {"city": "Tokyo"}}]}]}}
+
+{"timestamp": "2026-09-08T10:00:03Z", "type": "edge_traverse", "from": "agent", "to": "tools", "condition": "tool_calls_present"}
+
+{"timestamp": "2026-09-08T10:00:04Z", "type": "node_start", "node": "tools", "state_keys": ["messages"]}
+{"timestamp": "2026-09-08T10:00:05Z", "type": "tool_call", "tool": "get_weather", "input": {"city": "Tokyo"}, "output": "Tokyo: 28C, light rain, humidity 75%", "node": "tools"}
+{"timestamp": "2026-09-08T10:00:05Z", "type": "node_end", "node": "tools", "duration_ms": 1050, "output": {"messages": [{"role": "tool", "content": "Tokyo: 28C, light rain, humidity 75%"}]}}
+
+{"timestamp": "2026-09-08T10:00:05Z", "type": "edge_traverse", "from": "tools", "to": "agent", "condition": "always"}
+
+{"timestamp": "2026-09-08T10:00:06Z", "type": "node_start", "node": "agent", "state_keys": ["messages"]}
+{"timestamp": "2026-09-08T10:00:07Z", "type": "llm_call", "model": "gpt-4o", "tokens_in": 280, "tokens_out": 60, "node": "agent"}
+{"timestamp": "2026-09-08T10:00:09Z", "type": "state_update", "node": "agent", "key": "messages", "graph": "react_agent"}
+{"timestamp": "2026-09-08T10:00:09Z", "type": "node_end", "node": "agent", "duration_ms": 3050, "output": {"messages": [{"role": "assistant", "content": "The weather in Tokyo is 28C with light rain. Yes, I recommend bringing an umbrella!"}]}}
+
+{"timestamp": "2026-09-08T10:00:09Z", "type": "edge_traverse", "from": "agent", "to": "__end__", "condition": "no_tool_calls"}
+
+{"timestamp": "2026-09-08T10:00:10Z", "type": "graph_end", "graph": "react_agent", "output": {"messages": [{"role": "assistant", "content": "The weather in Tokyo is 28C with light rain. Yes, I recommend bringing an umbrella!"}]}}
+
+# Empty line and comment line (should be skipped)

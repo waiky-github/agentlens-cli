@@ -1,0 +1,32 @@
+# CrewAI execution log sample
+# Based on CrewAI public documentation (https://docs.crewai.com/)
+# Format: [TIMESTAMP] [TYPE] details...
+# This sample represents a market_research crew with 2 agents performing 3 tasks.
+
+[2026-09-08 10:00:00] [AGENT] market_researcher: executing task
+[2026-09-08 10:00:00] [AGENT] market_researcher: thought=I should gather competitor pricing data from multiple sources
+[2026-09-08 10:00:01] [TASK] START: research_competitor_pricing
+[2026-09-08 10:01:00] [LLM] tokens_in=1200 tokens_out=350 model=gpt-4o
+[2026-09-08 10:01:30] [AGENT] market_researcher: thought=I need to search the web for the latest pricing pages
+[2026-09-08 10:02:15] [TOOL] web_search -> 4521 chars
+[2026-09-08 10:02:30] [AGENT] market_researcher: thought=the search results show competitor A at $29 and competitor B at $35 per month
+[2026-09-08 10:03:00] [LLM] tokens_in=5800 tokens_out=150 model=gpt-4o
+[2026-09-08 10:03:45] [TOOL] scrape_page -> 8230 chars
+[2026-09-08 10:04:10] [AGENT] market_researcher: thought=I have confirmed the pricing details from the scraped pages
+[2026-09-08 10:05:30] [TASK] COMPLETE: research_competitor_pricing
+
+[2026-09-08 10:05:31] [AGENT] data_analyst: executing task
+[2026-09-08 10:05:31] [AGENT] data_analyst: thought=I need to compile the research findings into a structured report
+[2026-09-08 10:05:32] [TASK] START: compile_analysis_report
+[2026-09-08 10:06:00] [LLM] tokens_in=3500 tokens_out=800 model=gpt-4o
+[2026-09-08 10:06:30] [AGENT] data_analyst: thought=the report should include a summary table and recommendations
+[2026-09-08 10:07:00] [TOOL] generate_report -> 2150 chars
+[2026-09-08 10:08:00] [LLM] tokens_in=2500 tokens_out=600 model=gpt-4o
+[2026-09-08 10:09:30] [TASK] COMPLETE: compile_analysis_report
+
+[2026-09-08 10:09:31] [TASK] START: send_slack_summary
+[2026-09-08 10:10:00] [LLM] tokens_in=1800 tokens_out=220 model=gpt-4o
+[2026-09-08 10:10:15] [TOOL] send_slack_message -> 480 chars
+[2026-09-08 10:10:30] [TASK] COMPLETE: send_slack_summary
+
+# Commentary line (should be skipped)

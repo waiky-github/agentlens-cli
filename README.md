@@ -54,6 +54,22 @@ agentlens-audit cost --input events.jsonl --json
 agentlens-audit cost --input ~/.hermes/logs/gateway.log
 ```
 
+## 框架接入 (Framework Adapters)
+
+AgentLens CLI 提供框架适配器，将主流多 Agent 框架的执行日志转换为统一事件流 JSONL，直接供 `audit` 子命令消费。
+
+| 框架 | 日志采集方式 | Converter | 用法示例 |
+|------|------------|-----------|---------|
+| **CrewAI** | 启用 CrewAI verbose 日志，捕获 `[AGENT]`/`[TASK]`/`[TOOL]`/`[LLM]` 结构化输出 | `converters/crewai_converter.py` | `python converters/crewai_converter.py crewai_output.log audit_events.jsonl` |
+| **AutoGen** | 启用 AutoGen 结构化日志（JSON Lines），每条消息包含 `type`/`source`/`role`/`tokens` 等字段 | `converters/autogen_converter.py` | `python converters/autogen_converter.py autogen_trace.jsonl audit_events.jsonl` |
+| **LangGraph** | 使用 LangGraph 的 tracing 回调，捕获 `node_start`/`node_end`/`llm_call`/`tool_call`/`edge_traverse` 等状态变更 | `converters/langgraph_converter.py` | `python converters/langgraph_converter.py langgraph_trace.jsonl audit_events.jsonl` |
+
+转换后统一使用 `audit` 命令审计：
+
+```bash
+python -m agentlens_cli audit --input audit_events.jsonl --json
+```
+
 ## Input Formats
 
 - **JSONL** — One JSON event per line (standard event stream)
