@@ -12,6 +12,7 @@ from .governance import detect_waste
 from .graph import build_graph
 from .decision import audit_decisions
 from .evidence import verify_evidence
+from .shadow import detect_shadow_agents
 
 
 def _load_events(input_path: str) -> list[dict]:
@@ -176,6 +177,13 @@ def format_audit_human(result: dict) -> str:
     avoidable = cost.get("avoidable_cost_ratio", 0)
     lines.append(f"  Avoidable ratio: {avoidable:.1%}")
 
+    # Layer 5: Shadow Agent Detection
+    shadow = result.get("shadow", {})
+    lines.append("")
+    lines.append("--- 5. Shadow Agent Detection ---")
+    lines.append(f"  Summary: {shadow.get('summary', 'no shadow agent findings')}")
+    lines.append(_format_findings_block("Shadow Findings", shadow.get("findings", [])))
+
     lines.append("")
     lines.append("=" * 60)
     return "\n".join(lines)
@@ -229,6 +237,14 @@ def build_cmd_audit(subparsers):
     p.add_argument(
         "--output-price", type=float, default=8.0,
         help="Output token price per 1M tokens (default: 8.0 CNY)",
+    )
+    p.add_argument(
+        "--known-agents", default=None,
+        help="Comma-separated list of known/registered agent identifiers (default: see config.py)",
+    )
+    p.add_argument(
+        "--dangerous-tools", default=None,
+        help="Comma-separated list of dangerous tool names (default: see config.py)",
     )
     p.set_defaults(func=cmd_audit)
 
@@ -296,6 +312,14 @@ def cmd_audit(args):
     from .config import CostModel
     cost_model = CostModel(input_price=args.input_price, output_price=args.output_price)
 
+    # Parse --known-agents and --dangerous-tools from CLI args
+    known_agents = None
+    if args.known_agents:
+        known_agents = [a.strip() for a in args.known_agents.split(",") if a.strip()]
+    dangerous_tools = None
+    if args.dangerous_tools:
+        dangerous_tools = [t.strip() for t in args.dangerous_tools.split(",") if t.strip()]
+
     # Layer 1: Collaboration Graph
     graph_data = build_graph(events)
 
@@ -312,6 +336,9 @@ def cmd_audit(args):
     # Layer 4: Cost (existing)
     cost_attribution = attribute_costs(events, cost_model)
     governance_data = detect_waste(events, cost_model)
+
+    # Layer 5: Shadow Agent Detection
+    shadow_findings = detect_shadow_agents(events, known_agents, dangerous_tools)
 
     total_cost = cost_attribution["total_cost"]
     total_wasted = governance_data["total_est_wasted_cost"]
@@ -354,6 +381,14 @@ def cmd_audit(args):
             "findings": governance_data["findings"],
             "total_est_wasted_cost": governance_data["total_est_wasted_cost"],
             "avoidable_cost_ratio": avoidable_ratio,
+        },
+        "shadow": {
+            "summary": (
+                f"{len(shadow_findings)} shadow agent findings"
+                if shadow_findings
+                else "no shadow agent findings"
+            ),
+            "findings": shadow_findings,
         },
     }
 

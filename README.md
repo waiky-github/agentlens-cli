@@ -1,8 +1,8 @@
 # AgentLens CLI
 
-Multi-agent governance toolkit — four-layer audit CLI covering collaboration graph, decision audit, evidence chain, and cost governance.
+Multi-agent governance toolkit — five-layer audit CLI covering collaboration graph, decision audit, evidence chain, cost governance, and shadow agent detection.
 
-## Four-Layer Audit
+## Five-Layer Audit
 
 | Layer | Module | Description |
 |-------|--------|-------------|
@@ -10,6 +10,7 @@ Multi-agent governance toolkit — four-layer audit CLI covering collaboration g
 | 2. Decision Audit | `decision.py` | Checks dispatch rationale, L3 approval chains, and detects approval bypass (`APPROVAL_BYPASS_CONFIRMED`). |
 | 3. Evidence Chain | `evidence.py` | Verifies every event/claim has a reachable `evidence_ref`. Outputs completeness ratio and missing-evidence list. |
 | 4. Cost Layer | `governance.py` + `attribution.py` | Token attribution + waste detection (large-output injection, repeated calls, context bloat, etc.). |
+| 5. Shadow Agent Detection | `shadow.py` | Detects unregistered agents (`SHADOW_AGENT_DETECTED`), unauthorized tool calls (`UNAUTHORIZED_TOOL_CALL`), and privilege boundary violations (`PRIVILEGE_BOUNDARY_VIOLATION`). Compliant with 网信办《智能体规范应用与创新发展实施意见》(2026-05). |
 
 ## Install
 
@@ -26,7 +27,7 @@ python -m agentlens_cli audit --input examples/hermes_gateway_events.jsonl
 
 ## Usage
 
-### `audit` — Full Four-Layer Audit
+### `audit` — Full Five-Layer Audit
 
 ```bash
 # Human-readable report (default)
@@ -40,6 +41,9 @@ agentlens-audit audit --input events.jsonl --json --input-price 1.5 --output-pri
 
 # HTML report (self-contained, offline-capable)
 agentlens-audit audit --input events.jsonl --format html --output report.html
+
+# Shadow agent detection with custom known agents and dangerous tools
+agentlens-audit audit --input events.jsonl --json --known-agents "agent:main,team-leader,collector" --dangerous-tools "shell,rm,exec"
 
 # Works with nested JSON (e.g. approval_bypass.json), JSONL, and gateway.log
 agentlens-audit audit --input examples/approval_bypass.json --json
@@ -95,6 +99,8 @@ Key fields in JSON output (audit subcommand):
 | `evidence.missing_evidence` | Events without reachable evidence |
 | `cost.total_cost` | Total estimated cost (CNY) |
 | `cost.findings` | Waste detection findings |
+| `shadow.summary` | Shadow agent detection summary |
+| `shadow.findings` | Shadow agent findings: `SHADOW_AGENT_DETECTED`, `UNAUTHORIZED_TOOL_CALL`, `PRIVILEGE_BOUNDARY_VIOLATION` |
 
 Each finding follows the structured format: `severity`, `title`, `evidence_refs`, `recommendation`, `est_impact` (where applicable).
 
@@ -130,7 +136,23 @@ Expected: `graph.metrics.closure_rate < 1.0`, `absent_workers` includes graph-bu
 python -m agentlens_cli audit --input examples/hermes_gateway_events.jsonl --json
 ```
 
-Expected: All four layers produce output, JSON valid, exit code 0, ~11K events, ~435 cost findings.
+Expected: All five layers produce output, JSON valid, exit code 0, ~11K events, ~435 cost findings.
+
+### Scenario 5: Shadow Agent Detection
+
+```bash
+python -m agentlens_cli audit --input examples/shadow_agent_events.jsonl --json
+```
+
+Expected: `shadow.findings` contains `SHADOW_AGENT_DETECTED` (high), `UNAUTHORIZED_TOOL_CALL` (high), `PRIVILEGE_BOUNDARY_VIOLATION` (medium) — at least 1 of each type.
+
+### Scenario 6: Shadow Agent — Compliance (no false positives)
+
+```bash
+python -m agentlens_cli audit --input examples/multi_agent_task_events_v2.jsonl --json
+```
+
+Expected: `shadow.findings` is empty (0 findings) — legitimate agents should not trigger shadow detection.
 
 ## Example Data
 
@@ -138,3 +160,4 @@ Expected: All four layers produce output, JSON valid, exit code 0, ~11K events, 
 - `examples/approval_bypass.json` — High-risk config change without L3 approval (4 events)
 - `examples/multi_agent_task_events_v2.jsonl` — Full 5-worker pipeline with retries, conflict resolution, L3 approval (20 events)
 - `examples/multi_agent_task_events.jsonl` — Gaps scenario: 3 dispatched, only 1 completed (5 events)
+- `examples/shadow_agent_events.jsonl` — Shadow agent detection scenario: unregistered agent, unauthorized shell call, privilege escalation (6 events)
