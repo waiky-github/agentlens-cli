@@ -15,6 +15,7 @@ from .evidence import verify_evidence
 from .shadow import detect_shadow_agents
 from .compliance import audit_compliance
 from .integrity import build_integrity_block, embed_integrity_meta, verify_report
+from .regulations import map_all_layers, list_regulations
 
 
 def _load_events(input_path: str) -> list[dict]:
@@ -429,6 +430,9 @@ def cmd_audit(args):
         },
     }
 
+    # Apply regulation references to all findings across all layers
+    map_all_layers(result)
+
     if args.json:
         result["integrity"] = build_integrity_block(result, args.prev_hash)
         print(json.dumps(result, indent=2, ensure_ascii=False))
@@ -532,7 +536,7 @@ def _run_audit_for_diff(events: list[dict]) -> dict:
     total_wasted = governance_data["total_est_wasted_cost"]
     avoidable_ratio = round(total_wasted / total_cost, 4) if total_cost > 0 else 0.0
 
-    return {
+    result = {
         "events_loaded": len(events),
         "graph": {
             "nodes": graph_data["nodes"],
@@ -566,6 +570,10 @@ def _run_audit_for_diff(events: list[dict]) -> dict:
             "findings": compliance_data["findings"],
         },
     }
+
+    map_all_layers(result)
+
+    return result
 
 
 def _count_findings_by_severity(findings: list[dict]) -> dict:
@@ -780,6 +788,8 @@ def cmd_demo(args):
         },
     }
 
+    map_all_layers(result)
+
     html = render_html(result, demo_input)
     from .integrity import hash_content
     integrity = build_integrity_block(result, None, hash_content(html))
@@ -813,6 +823,35 @@ def cmd_verify(args):
         sys.exit(1)
 
 
+def build_cmd_regs(subparsers):
+    """Register the `regs` subcommand."""
+    p = subparsers.add_parser("regs", help="List all regulation reference mappings")
+    p.add_argument(
+        "--title", default=None,
+        help="Filter mappings by finding title (substring match)",
+    )
+    p.set_defaults(func=cmd_regs)
+
+
+def cmd_regs(args):
+    """Execute the `regs` subcommand."""
+    entries = list_regulations(args.title)
+    if not entries:
+        print("No regulation mappings found.", file=sys.stderr)
+        sys.exit(0)
+    for entry in entries:
+        print(f"\n--- {entry['title']} ---")
+        for ref in entry["refs"]:
+            regulation = ref.get("regulation", "unknown")
+            article = ref.get("article", "")
+            clause = ref.get("clause", "")
+            note = ref.get("note", "")
+            if note:
+                print(f"  {regulation} | {note}")
+            else:
+                print(f"  {regulation} | {article}: {clause}")
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="agentlens-audit",
@@ -830,6 +869,7 @@ def main():
     build_cmd_diff(subparsers)
     build_cmd_demo(subparsers)
     build_cmd_verify(subparsers)
+    build_cmd_regs(subparsers)
 
     args = parser.parse_args()
     if args.command is None:
