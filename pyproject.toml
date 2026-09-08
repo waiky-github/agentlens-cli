@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta:__legacy__"
 
 [project]
 name = "agentlens-audit"
-version = "0.2.0"
+version = "0.2.1"
 description = "Multi-agent audit CLI: cost governance, decision audit, evidence chain, shadow agent detection, compliance"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -18,3 +18,6 @@ mcp = ["mcp>=1.0"]
 
 [tool.setuptools.packages.find]
 include = ["agentlens_cli*"]
+
+[tool.setuptools.package-data]
+agentlens_cli = ["data/*.jsonl"]

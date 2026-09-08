@@ -705,13 +705,29 @@ def build_cmd_demo(subparsers):
 def cmd_demo(args):
     """Execute the `demo` subcommand."""
     import os as _os
-    # Resolve examples directory relative to the package
-    pkg_dir = _os.path.dirname(_os.path.abspath(__file__))
-    demo_input = _os.path.join(pkg_dir, "..", "examples", "multi_agent_task_events_v2.jsonl")
-    demo_input = _os.path.abspath(demo_input)
 
-    if not _os.path.isfile(demo_input):
-        print(f"Error: demo data file not found: {demo_input}", file=sys.stderr)
+    # 优先读包内样例数据（pip 安装后可用）；开发环境 fallback 到仓库 examples/
+    demo_input = None
+    try:
+        from importlib import resources as _resources
+        with _resources.as_file(
+            _resources.files("agentlens_cli").joinpath("data", "demo_events.jsonl")
+        ) as _p:
+            if _os.path.isfile(str(_p)):
+                demo_input = str(_p)
+    except Exception:
+        demo_input = None
+
+    if demo_input is None:
+        pkg_dir = _os.path.dirname(_os.path.abspath(__file__))
+        candidate = _os.path.abspath(
+            _os.path.join(pkg_dir, "..", "examples", "multi_agent_task_events_v2.jsonl")
+        )
+        if _os.path.isfile(candidate):
+            demo_input = candidate
+
+    if demo_input is None:
+        print("Error: demo data file not found", file=sys.stderr)
         sys.exit(1)
 
     events = _load_events(demo_input)
