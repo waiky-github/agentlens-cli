@@ -170,6 +170,23 @@ class TestShadowDetection:
         agents = [f.get("agent") for f in priv]
         assert "collector" in agents, f"collector not in privilege violations: {agents}"
 
+    def test_user_unknown_whitelisted_not_shadow(self):
+        """2026-09-09 自治理：user:* 前缀（外部网关用户）不再误报为影子智能体。
+        由 EXTERNAL_USER_PREFIXES 前缀规则豁免，不依赖白名单硬编码。"""
+        events = _load(EXAMPLES_DIR / "hermes_gateway_events.jsonl")
+        findings = detect_shadow_agents(events, DEFAULT_KNOWN_AGENTS, DEFAULT_DANGEROUS_TOOLS)
+        shadow_agents = [
+            f.get("agent") for f in findings if f["title"] == "SHADOW_AGENT_DETECTED"
+        ]
+        # user:* 前缀应被豁免（含 user:unknown 与真实飞书 open_id user:ou_xxx）
+        assert not any(a.startswith("user:") for a in shadow_agents), (
+            f"user:* 前缀应被 EXTERNAL_USER_PREFIXES 豁免，仍在 shadow 发现中: {shadow_agents}"
+        )
+        # hermes:gateway:log（事件流 source）在白名单中
+        assert "hermes:gateway:log" in DEFAULT_KNOWN_AGENTS, (
+            "hermes:gateway:log 应存在于 DEFAULT_KNOWN_AGENTS 白名单"
+        )
+
 
 # ── Compliance Detection ───────────────────────────────────────────
 

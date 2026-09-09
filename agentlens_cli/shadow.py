@@ -54,6 +54,14 @@ def _agent_from_event(evt: dict) -> str:
     return ""
 
 
+# 外部消息用户前缀：网关事件流中来自外部 IM/DM 会话的用户标识统一以
+# "user:" 开头（如 user:unknown、user:ou_xxx 飞书 open_id）。这些是正常
+# 的外部消息入口，不是运行中的影子智能体。
+# 2026-09-09 自治理：真实 Hermes 网关日志误报 3 条影子 agent 均为 user:*，
+# 用前缀规则统一豁免，避免把具体 open_id 硬编码进白名单（不泄露个人信息）。
+EXTERNAL_USER_PREFIXES = ("user:",)
+
+
 def _detect_shadow_agents(events: list, known_agents: set) -> list:
     """Detect agent identifiers that appear in events but are not in the known_agents whitelist."""
     findings = []
@@ -62,6 +70,9 @@ def _detect_shadow_agents(events: list, known_agents: set) -> list:
     for evt in events:
         agent = _agent_from_event(evt)
         if not agent:
+            continue
+        # 外部消息用户（user:*）不是影子智能体，统一豁免
+        if agent.startswith(EXTERNAL_USER_PREFIXES):
             continue
         if agent in known_agents or agent in seen_shadow:
             continue
