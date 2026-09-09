@@ -28,8 +28,11 @@
   - **remediation 修复建议**：remediation.py，每类 finding 配具体修复建议（action+detail+priority），439 findings 全覆盖；HTML 每条 finding 加修复建议区块 + 第 8 节修复优先级汇总
   - **报告仪表盘**（2026-09-09）：report.py 顶部「一页速览」——6 KPI 卡（发现总数/预估浪费/影子/审批绕过/可避免占比/闭环率）+ 3 张 ECharts 图（严重度分布环形图/Top10 浪费条形图/Agent 成本+Token 双轴图），ECharts CDN + 三重 resize 兜底 + 动画禁用（静态全貌）
   - **Web 服务**（2026-09-09，e3eba58 → 0aeb44c UI 重构）：`agentlens-audit serve --host 0.0.0.0 --port 8010`，FastAPI 完整 API + 操作界面。REST：/api/reports（列表+元信息）/ /api/reports/{date}/html（原始报告）/ POST /api/audit/run（触发审计）/ /api/watchdog（漂移状态）/ **/api/reports/trends**（多报告聚合趋势数据）。页面（Langfuse 式深色主题）：左侧 sidebar + 顶部时间范围选择器 + 仪表盘（6 KPI 带 sparkline + 成本趋势双轴图 + 严重度环形图 + 最新报告摘要 + Watchdog 状态 + 最近审计动态）/ 报告列表（排序/搜索）/ 独立审计页（表单 + 运行状态 + 最近任务）/ 报告详情（iframe 全宽 + 顶部工具条）。pyproject 新增 [web] optional（fastapi+uvicorn）+ Basic Auth 中间件（环境变量注入，未设置则放行）
+- **P0 优化批**（2026-09-09，2a689e1）：报告发现聚合去重（相同 layer+title 合并 + 出现次数）/ 发现列表严重度筛选折叠 / 详情页剥离 iframe（report-frame 内嵌作用域 CSS）/ 审计任务持久化（audit-tasks.json，重启不丢）
+- **P1 优化批**（2026-09-09，8233af4）：`/reports/compare?base=X&curr=Y` 报告对比页（新增/已修复/持续存在 + 汇总卡 + 浪费变化箭头 + 400/404 守卫）；`/api/reports/{date}/findings.csv` CSV 全量导出（UTF-8-sig Excel 兼容、按 layer+title 聚合、出现次数列）；report.py 内嵌完整 findings-data JSON（436 条，解决「报告只渲染 Top-10 导致 CSV 丢 426 条」）
+- **P2 优化批**（2026-09-09，1deb257）：修复跟踪闭环（/api/findings/status + mark-fixed + 审计 run 后自动复检 reopened/closed + fixed-findings.json 持久化 + UI 区块）；多项目/多环境（报告目录 <project>/ 子目录 + /api/projects + project 参数，兼容旧数据回退根目录）；通知渠道配置化（notify.py feishu/webhook/command 三通道 + notify-config.json 600 + 无配置回退 hermes send）
 - 文档：README（含 verify/regs/remediations/watchdog，测试数 60→120）+ README.en.md（英文对外版）+ docs/example-report.html（真实样例报告，integrity VERIFIED）
-- 测试：tests/ pytest **142 用例全绿**（公共 venv /home/agentuser/.hermes/hermes-agent/venv/bin/python -m pytest tests/ -q）
+- 测试：tests/ pytest **172 用例全绿**（公共 venv /home/agentuser/.hermes/hermes-agent/venv/bin/python -m pytest tests/ -q）
 
 ## 关键事实（避免重踩）
 - **PyPI 包名 `agentlens-cli` 已被他人占用**（发布 403）→ 改名 `agentlens-audit`（2026-09-08 实测 404 可用后发布）
@@ -59,11 +62,11 @@
 - 端口：liuyao 8000 / agentlens-web 8010 / agentlens-mcp 8765 / hermes-stats 3001
 
 ## 待办
+- [x] P0/P1/P2 持续优化批（2026-09-09 全部完成：聚合去重/筛选折叠/剥离 iframe/任务持久化 + 对比页/CSV + 修复跟踪闭环/多项目/通知配置化）
 - [ ] GitHub git 历史 push（等网络恢复/代理：`git remote add origin https://github.com/waiky-github/agentlens-cli.git && git push -u origin main`，需 http.version HTTP/1.1 已全局设）
-- [ ] 版本 0.3.0（watchdog/remediation 已入 0.2.1，Web 服务待发版；视用户/市场反馈迭代）
+- [ ] 版本 0.3.0（watchdog/remediation 已入 0.2.1，Web 服务 + P0/P1/P2 优化待发版；视用户/市场反馈迭代）
 - [ ] 销售材料（用户已认可方向：先功能后宣传，功能开发完成后再做 BD）
 - [ ] Web 服务版本号/README 更新（serve 子命令 + [web] 安装说明）
-- [ ] 将最新分层报告重新生成进报告目录（~/.hermes/agentlens-reports/audit-YYYYMMDD.html），替换旧版未分层报告，让正式服务详情页展示分层导航
 
 ## 里程碑
 - 2026-09-08：agentlens-cli 从零到发布（Trae 4 轮任务 + 我验真 + 7 功能批次，10 次 commit）
@@ -72,3 +75,4 @@
 - 2026-09-08/09：三项优化 100% 闭环——方向1 发布 0.2.1（含 0.2.0 双 bug 修复 + README.en + 示例报告）/ 方向2 watchdog 漂移监控（含漏报修复，04a87b8）/ 方向3 remediation 修复建议（1503800）；120/120 测试全绿，0.2.1[mcp] 全新环境验证过
 - 2026-09-09：自治理闭环（21feb09）——P0 阈值调低（tool_output 50000→20000）+ P2 影子误报清零（user:* 前缀豁免）+ 工具调用节流纪律；持久化部署（每天 03:00 审计 + 漂移推飞书）
 - 2026-09-09：报告仪表盘 + Web 服务（e3eba58）——ECharts 一页速览 + serve 完整 API/操作界面，139/139 测试全绿，systemd agentlens-web 常驻 8010 端口
+- 2026-09-09：P0（2a689e1）+ P1（8233af4）+ P2（1deb257）三批持续优化全部完成并验真——修复跟踪闭环 / 多项目 / 通知配置化 / 对比页 / CSV 全量导出；172/172 测试全绿，正式服务 8010 已加载

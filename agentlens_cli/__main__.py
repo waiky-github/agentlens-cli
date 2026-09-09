@@ -924,6 +924,26 @@ def build_cmd_watchdog(subparsers):
     p.set_defaults(func=cmd_watchdog)
 
 
+def build_cmd_notify(subparsers):
+    """Register the `notify` subcommand."""
+    p = subparsers.add_parser("notify", help="发送通知 (从 notify-config.json 读取渠道配置)")
+    p.add_argument("subject", help="通知主题")
+    p.add_argument("body", help="通知内容")
+    p.set_defaults(func=cmd_notify)
+
+
+def cmd_notify(args):
+    """Execute the `notify` subcommand."""
+    from agentlens_cli.notify import send_notify
+    results = send_notify(args.subject, args.body)
+    ok = all(r.get("status") == "ok" for r in results)
+    if not ok:
+        for r in results:
+            if r.get("status") != "ok":
+                print(f"[{r['channel']}] error: {r.get('detail', 'unknown')}", file=sys.stderr)
+        sys.exit(1)
+
+
 def build_cmd_serve(subparsers):
     """Register the `serve` subcommand."""
     p = subparsers.add_parser("serve", help="启动 Web 服务（REST API + 浏览器操作界面）")
@@ -1083,6 +1103,7 @@ def main():
     build_cmd_regs(subparsers)
     build_cmd_remediations(subparsers)
     build_cmd_watchdog(subparsers)
+    build_cmd_notify(subparsers)
     build_cmd_serve(subparsers)
 
     args = parser.parse_args()

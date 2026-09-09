@@ -13,3 +13,7 @@ venv/
 .DS_Store
 .idea/
 .vscode/
+
+# Runtime data (not to be committed)
+notify-config.json
+fixed-findings.json

@@ -69,9 +69,10 @@ WATCH_RC=$?
 "$AUDIT" watchdog --input "$MERGED" --write-baseline "$BASELINE" >/dev/null 2>&1
 
 if [ $WATCH_RC -ne 0 ]; then
-    # 有漂移 → 输出报警摘要 + 推飞书
+    # 有漂移 → 输出报警摘要 + 推通知渠道
     SUMMARY=$(echo "$WATCH_OUT" | grep -E "delta|新增|增长|high" | head -10)
     ALERT="$WORKDIR/drift_alert.txt"
+    SUBJECT="agentlens 漂移报警 $(date +%Y-%m-%d)"
     {
         echo "⚠️ agentlens 每日审计：检测到高风险漂移"
         echo "时间：$(date '+%Y-%m-%d %H:%M')"
@@ -82,7 +83,9 @@ if [ $WATCH_RC -ne 0 ]; then
         echo ""
         echo "报告：$REPORT"
     } > "$ALERT"
-    hermes send -t feishu -s "agentlens 漂移报警 $(date +%Y-%m-%d)" -f "$ALERT" >/dev/null 2>&1 || true
+    # P2-3: 使用 notify 模块发送通知（若无配置则回退到 hermes send -t feishu）
+    "$PYTHON" -m agentlens_cli notify "$SUBJECT" "$(cat "$ALERT")" >/dev/null 2>&1 || \
+        hermes send -t feishu -s "$SUBJECT" -f "$ALERT" >/dev/null 2>&1 || true
     cat "$ALERT"
     exit 1
 fi
