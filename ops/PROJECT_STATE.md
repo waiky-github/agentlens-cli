@@ -26,8 +26,10 @@
   - **N2 MCP server**：mcp_server.py，FastMCP 4 工具（audit/cost_analysis/verify_report/list_regulations），stdio + streamable-http 双传输，0.2.1[mcp] 全新环境实测注册成功
   - **watchdog 持续审计**：watchdog.py，建基线→定期复检→发现「新增问题漂移」，退出码 0/1/2 报警语义，cron 可调度（含「已有 high 数量增长」漏报修复）
   - **remediation 修复建议**：remediation.py，每类 finding 配具体修复建议（action+detail+priority），439 findings 全覆盖；HTML 每条 finding 加修复建议区块 + 第 8 节修复优先级汇总
+  - **报告仪表盘**（2026-09-09）：report.py 顶部「一页速览」——6 KPI 卡（发现总数/预估浪费/影子/审批绕过/可避免占比/闭环率）+ 3 张 ECharts 图（严重度分布环形图/Top10 浪费条形图/Agent 成本+Token 双轴图），ECharts CDN + 三重 resize 兜底 + 动画禁用（静态全貌）
+  - **Web 服务**（2026-09-09，e3eba58）：`agentlens-audit serve --host 127.0.0.1 --port 8010`，FastAPI 完整 API + 操作界面。REST：/api/reports（列表+元信息）/ /api/reports/{date}/html（原始报告）/ POST /api/audit/run（触发审计）/ /api/watchdog（漂移状态）。页面：仪表盘（KPI+报告列表+watchdog 状态+触发审计表单）/ 报告列表 / 报告详情（iframe 内嵌完整报告）。pyproject 新增 [web] optional（fastapi+uvicorn）
 - 文档：README（含 verify/regs/remediations/watchdog，测试数 60→120）+ README.en.md（英文对外版）+ docs/example-report.html（真实样例报告，integrity VERIFIED）
-- 测试：tests/ pytest **120 用例全绿**（公共 venv /home/agentuser/.hermes/hermes-agent/venv/bin/python -m pytest tests/ -q）
+- 测试：tests/ pytest **139 用例全绿**（公共 venv /home/agentuser/.hermes/hermes-agent/venv/bin/python -m pytest tests/ -q）
 
 ## 关键事实（避免重踩）
 - **PyPI 包名 `agentlens-cli` 已被他人占用**（发布 403）→ 改名 `agentlens-audit`（2026-09-08 实测 404 可用后发布）
@@ -42,17 +44,30 @@
 - twine/build：`/home/agentuser/crawl/.venv/bin/`（twine ✅；build 已装 ✅）
 
 ## 环境依赖
-- 运行：纯 stdlib（Python ≥3.9），无第三方运行依赖
+- 运行：纯 stdlib（Python ≥3.9），无第三方运行依赖；Web 服务需 fastapi+uvicorn（pyproject [web] optional）
 - 测试：pytest 9.0.2（公共 venv `/home/agentuser/.hermes/hermes-agent/venv/`）
 - 构建：crawl/.venv（setuptools/build/twine）
+- 持久 venv：`/home/agentuser/agentlens-venv`（agentlens-audit 本地源码 --no-deps 安装，含 P2 修复 + dashboard + web，2026-09-09 重装）
+
+## 持久化部署（2026-09-09 全部 active）
+| systemd user unit | 作用 | 状态 |
+|:--|:--|:--|
+| agentlens-audit.timer（→agentlens-audit.service） | 每天 03:00 增量审计近 1 天 gateway 日志（5 个 profile 合并）→ HTML 报告 + watchdog 基线；漂移退出码 1 + **推飞书**（hermes send） | enabled + active |
+| agentlens-web.service | `serve --port 8010`（127.0.0.1），Web 仪表盘 + 报告查看 + 触发审计 API | enabled + active（PID 2291132 起） |
+- 报告目录：`~/.hermes/agentlens-reports/`（audit-YYYYMMDD.html + baseline.json）
+- 转换器：scripts/convert_gateway_log.py（丢弃 msg 原文、用户 ID→user:unknown）；调度：scripts/run_daily_audit.sh（DAYS=1，漂移分支 hermes send -t feishu）
+- 端口：liuyao 8000 / agentlens-web 8010 / agentlens-mcp 8765 / hermes-stats 3001
 
 ## 待办
 - [ ] GitHub git 历史 push（等网络恢复/代理：`git remote add origin https://github.com/waiky-github/agentlens-cli.git && git push -u origin main`，需 http.version HTTP/1.1 已全局设）
-- [ ] 版本 0.3.0（watchdog/remediation 已入 0.2.1，视用户/市场反馈迭代）
+- [ ] 版本 0.3.0（watchdog/remediation 已入 0.2.1，Web 服务待发版；视用户/市场反馈迭代）
 - [ ] 销售材料（用户已认可方向：先功能后宣传，功能开发完成后再做 BD）
+- [ ] Web 服务版本号/README 更新（serve 子命令 + [web] 安装说明）
 
 ## 里程碑
 - 2026-09-08：agentlens-cli 从零到发布（Trae 4 轮任务 + 我验真 + 7 功能批次，10 次 commit）
 - 2026-09-08：PyPI agentlens-audit 0.1.0 发布 + GitHub 仓库上线 + 60 测试全绿
 - 2026-09-08：N1 报告防篡改（92c17bb）+ N3 合规条款映射（aadfb80，75 测试）+ N2 MCP server（caffd3c，4 工具 stdio/http 双传输）全部完成并验真
 - 2026-09-08/09：三项优化 100% 闭环——方向1 发布 0.2.1（含 0.2.0 双 bug 修复 + README.en + 示例报告）/ 方向2 watchdog 漂移监控（含漏报修复，04a87b8）/ 方向3 remediation 修复建议（1503800）；120/120 测试全绿，0.2.1[mcp] 全新环境验证过
+- 2026-09-09：自治理闭环（21feb09）——P0 阈值调低（tool_output 50000→20000）+ P2 影子误报清零（user:* 前缀豁免）+ 工具调用节流纪律；持久化部署（每天 03:00 审计 + 漂移推飞书）
+- 2026-09-09：报告仪表盘 + Web 服务（e3eba58）——ECharts 一页速览 + serve 完整 API/操作界面，139/139 测试全绿，systemd agentlens-web 常驻 8010 端口
