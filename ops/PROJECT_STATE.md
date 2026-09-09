@@ -27,9 +27,9 @@
   - **watchdog 持续审计**：watchdog.py，建基线→定期复检→发现「新增问题漂移」，退出码 0/1/2 报警语义，cron 可调度（含「已有 high 数量增长」漏报修复）
   - **remediation 修复建议**：remediation.py，每类 finding 配具体修复建议（action+detail+priority），439 findings 全覆盖；HTML 每条 finding 加修复建议区块 + 第 8 节修复优先级汇总
   - **报告仪表盘**（2026-09-09）：report.py 顶部「一页速览」——6 KPI 卡（发现总数/预估浪费/影子/审批绕过/可避免占比/闭环率）+ 3 张 ECharts 图（严重度分布环形图/Top10 浪费条形图/Agent 成本+Token 双轴图），ECharts CDN + 三重 resize 兜底 + 动画禁用（静态全貌）
-  - **Web 服务**（2026-09-09，e3eba58）：`agentlens-audit serve --host 127.0.0.1 --port 8010`，FastAPI 完整 API + 操作界面。REST：/api/reports（列表+元信息）/ /api/reports/{date}/html（原始报告）/ POST /api/audit/run（触发审计）/ /api/watchdog（漂移状态）。页面：仪表盘（KPI+报告列表+watchdog 状态+触发审计表单）/ 报告列表 / 报告详情（iframe 内嵌完整报告）。pyproject 新增 [web] optional（fastapi+uvicorn）
+  - **Web 服务**（2026-09-09，e3eba58 → 0aeb44c UI 重构）：`agentlens-audit serve --host 0.0.0.0 --port 8010`，FastAPI 完整 API + 操作界面。REST：/api/reports（列表+元信息）/ /api/reports/{date}/html（原始报告）/ POST /api/audit/run（触发审计）/ /api/watchdog（漂移状态）/ **/api/reports/trends**（多报告聚合趋势数据）。页面（Langfuse 式深色主题）：左侧 sidebar + 顶部时间范围选择器 + 仪表盘（6 KPI 带 sparkline + 成本趋势双轴图 + 严重度环形图 + 最新报告摘要 + Watchdog 状态 + 最近审计动态）/ 报告列表（排序/搜索）/ 独立审计页（表单 + 运行状态 + 最近任务）/ 报告详情（iframe 全宽 + 顶部工具条）。pyproject 新增 [web] optional（fastapi+uvicorn）+ Basic Auth 中间件（环境变量注入，未设置则放行）
 - 文档：README（含 verify/regs/remediations/watchdog，测试数 60→120）+ README.en.md（英文对外版）+ docs/example-report.html（真实样例报告，integrity VERIFIED）
-- 测试：tests/ pytest **139 用例全绿**（公共 venv /home/agentuser/.hermes/hermes-agent/venv/bin/python -m pytest tests/ -q）
+- 测试：tests/ pytest **142 用例全绿**（公共 venv /home/agentuser/.hermes/hermes-agent/venv/bin/python -m pytest tests/ -q）
 
 ## 关键事实（避免重踩）
 - **PyPI 包名 `agentlens-cli` 已被他人占用**（发布 403）→ 改名 `agentlens-audit`（2026-09-08 实测 404 可用后发布）
@@ -63,6 +63,7 @@
 - [ ] 版本 0.3.0（watchdog/remediation 已入 0.2.1，Web 服务待发版；视用户/市场反馈迭代）
 - [ ] 销售材料（用户已认可方向：先功能后宣传，功能开发完成后再做 BD）
 - [ ] Web 服务版本号/README 更新（serve 子命令 + [web] 安装说明）
+- [ ] 将最新分层报告重新生成进报告目录（~/.hermes/agentlens-reports/audit-YYYYMMDD.html），替换旧版未分层报告，让正式服务详情页展示分层导航
 
 ## 里程碑
 - 2026-09-08：agentlens-cli 从零到发布（Trae 4 轮任务 + 我验真 + 7 功能批次，10 次 commit）
