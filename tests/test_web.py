@@ -33,8 +33,26 @@ class TestApiReports:
         data = resp.json()
         if data:
             r = data[0]
-            for field in ["date", "filename", "size_bytes", "mtime", "events", "high", "medium", "low", "findings_total"]:
+            for field in ["date", "filename", "size_bytes", "mtime", "events", "high",
+                          "medium", "low", "findings_total", "total_cost", "est_waste"]:
                 assert field in r, f"missing field: {field}"
+
+    def test_trends_returns_200(self):
+        resp = client.get("/api/reports/trends")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert isinstance(data, dict)
+        for key in ["dates", "total_cost", "est_waste", "findings", "high", "events"]:
+            assert key in data, f"missing key: {key}"
+            assert isinstance(data[key], list)
+
+    def test_trends_has_data(self):
+        resp = client.get("/api/reports/trends")
+        data = resp.json()
+        if data["dates"]:
+            assert "20260909" in data["dates"]
+            assert len(data["total_cost"]) == len(data["dates"])
+            assert len(data["est_waste"]) == len(data["dates"])
 
     def test_report_detail_returns_200(self):
         resp = client.get("/api/reports/20260909")
@@ -115,13 +133,19 @@ class TestPages:
         resp = client.get("/")
         assert resp.status_code == 200
         assert "text/html" in resp.headers["content-type"]
-        assert "触发审计" in resp.text
+        assert "sidebar" in resp.text or "仪表盘" in resp.text
 
     def test_dashboard_has_kpi_cards(self):
         resp = client.get("/")
         assert resp.status_code == 200
         assert "仪表盘" in resp.text
         assert "Watchdog" in resp.text
+
+    def test_audit_page_returns_200(self):
+        resp = client.get("/audit")
+        assert resp.status_code == 200
+        assert "text/html" in resp.headers["content-type"]
+        assert "触发审计" in resp.text
 
     def test_reports_page_returns_200(self):
         resp = client.get("/reports")

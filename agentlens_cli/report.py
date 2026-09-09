@@ -555,7 +555,7 @@ class _HtmlBuilder:
         metrics = graph.get("metrics", {})
         return (
             f'<div class="section" id="layer-graph">'
-            f'<h2>1. 协作图谱</h2>'
+            f'<h2><span class="layer-badge">01</span> 协作图谱<a href="#dashboard" class="back-to-top">返回概览 ↑</a></h2>'
             f'<div class="metrics-bar">'
             f'<span>节点: <strong>{len(graph.get("nodes", []))}</strong></span>'
             f'<span>边: <strong>{len(graph.get("edges", []))}</strong></span>'
@@ -578,7 +578,7 @@ class _HtmlBuilder:
             )
         return (
             f'<div class="section" id="layer-decision">'
-            f'<h2>2. 决策审计</h2>'
+            f'<h2><span class="layer-badge">02</span> 决策审计<a href="#dashboard" class="back-to-top">返回概览 ↑</a></h2>'
             f'{bypass_banner}'
             f'<div class="metrics-bar">'
             f'<span>决策链步骤: <strong>{len(decision.get("decision_chain", []))}</strong></span>'
@@ -606,7 +606,7 @@ class _HtmlBuilder:
             )
         return (
             f'<div class="section" id="layer-evidence">'
-            f'<h2>3. 证据链</h2>'
+            f'<h2><span class="layer-badge">03</span> 证据链<a href="#dashboard" class="back-to-top">返回概览 ↑</a></h2>'
             f'<div class="metrics-bar">'
             f'<span>声明检查: <strong>{evidence.get("claims_checked", 0)}</strong></span>'
             f'<span>已验证: <strong>{evidence.get("verified", 0)}</strong></span>'
@@ -637,7 +637,7 @@ class _HtmlBuilder:
 
         return (
             f'<div class="section" id="layer-cost">'
-            f'<h2>4. 成本治理</h2>'
+            f'<h2><span class="layer-badge">04</span> 成本治理<a href="#dashboard" class="back-to-top">返回概览 ↑</a></h2>'
             f'<div class="metrics-bar">'
             f'<span>总输入 Token: <strong>{cost.get("total_tokens_in", 0):,}</strong></span>'
             f'<span>总输出 Token: <strong>{cost.get("total_tokens_out", 0):,}</strong></span>'
@@ -667,7 +667,7 @@ class _HtmlBuilder:
             )
         return (
             f'<div class="section" id="layer-shadow">'
-            f'<h2>5. 影子智能体检测</h2>'
+            f'<h2><span class="layer-badge">05</span> 影子智能体检测<a href="#dashboard" class="back-to-top">返回概览 ↑</a></h2>'
             f'{shadow_banner}'
             f'<div class="metrics-bar">'
             f'<span>摘要: <strong>{self._esc(shadow.get("summary", "no findings"))}</strong></span>'
@@ -690,7 +690,7 @@ class _HtmlBuilder:
             )
         return (
             f'<div class="section" id="layer-compliance">'
-            f'<h2>6. 决策权限合规</h2>'
+            f'<h2><span class="layer-badge">06</span> 决策权限合规<a href="#dashboard" class="back-to-top">返回概览 ↑</a></h2>'
             f'{compliance_banner}'
             f'<div class="metrics-bar">'
             f'<span>摘要: <strong>{self._esc(compliance.get("summary", "no findings"))}</strong></span>'
@@ -735,7 +735,7 @@ class _HtmlBuilder:
 
         return (
             f'<div class="section" id="layer-compliance-mapping">'
-            f'<h2>7. 合规条款映射</h2>'
+            f'<h2><span class="layer-badge">07</span> 合规条款映射<a href="#dashboard" class="back-to-top">返回概览 ↑</a></h2>'
             f'<div class="metrics-bar">'
             f'<span>引用的法规条款: <strong>{len(reg_rows)}</strong></span>'
             f'<span>主要法规: 网信办《实施意见》(2026-05-08) / EU AI Act (2024/1689) / 《拟人化互动办法》(2026-07-15)</span>'
@@ -781,7 +781,7 @@ class _HtmlBuilder:
 
         return (
             f'<div class="section" id="layer-remediation-priority">'
-            f'<h2>8. 修复优先级</h2>'
+            f'<h2><span class="layer-badge">08</span> 修复优先级<a href="#dashboard" class="back-to-top">返回概览 ↑</a></h2>'
             f'<div class="metrics-bar">'
             f'<span>High 优先级修复: <strong>{len(high_unique)}</strong></span>'
             f'<span>Medium 优先级修复: <strong>{len(medium_unique)}</strong></span>'
@@ -823,10 +823,31 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,san
 .card-value{font-size:20px;font-weight:700}
 .card-sub{font-size:12px;margin-top:4px;opacity:0.8}
 .section{background:#fff;border-radius:10px;padding:24px;margin-bottom:20px;
-  box-shadow:0 1px 4px rgba(0,0,0,0.06)}
+  box-shadow:0 1px 4px rgba(0,0,0,0.06);scroll-margin-top:60px}
 .section h2{font-size:18px;border-bottom:2px solid #eee;padding-bottom:10px;margin-bottom:16px}
+.section h2 .layer-badge{display:inline-block;font-size:11px;font-weight:700;color:#fff;
+  background:#6c757d;padding:2px 8px;border-radius:4px;margin-right:8px;vertical-align:middle;
+  font-family:monospace;letter-spacing:0.5px}
+.section h2 .back-to-top{float:right;font-size:11px;font-weight:400;color:#0d6efd;
+  text-decoration:none;padding:2px 8px;border-radius:4px;transition:background 0.15s}
+.section h2 .back-to-top:hover{background:#e8f0fe}
 .section h3{font-size:15px;margin:20px 0 10px;color:#555}
 .section h4{font-size:14px;margin:16px 0 8px;color:#666}
+/* ── sticky nav bar ── */
+.layer-nav{position:sticky;top:0;z-index:100;background:rgba(15,17,23,0.92);
+  backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+  padding:10px 0;margin-bottom:24px;border-bottom:1px solid #ddd;
+  overflow-x:auto;white-space:nowrap}
+.layer-nav-inner{display:flex;gap:6px;max-width:1100px;margin:0 auto;padding:0 12px}
+.layer-nav a{display:inline-block;padding:6px 14px;border-radius:16px;font-size:12px;
+  font-weight:600;color:#555;text-decoration:none;transition:all 0.2s;
+  background:transparent;border:1px solid transparent}
+.layer-nav a:hover{background:#e8f0fe;color:#0d6efd}
+.layer-nav a.active{background:#0d6efd;color:#fff;border-color:#0d6efd}
+@media(max-width:768px){
+  .layer-nav-inner{padding:0 8px;gap:4px}
+  .layer-nav a{padding:5px 10px;font-size:11px}
+}
 .metrics-bar{display:flex;flex-wrap:wrap;gap:16px;font-size:13px;margin-bottom:16px;
   padding:12px;background:#f8f9fa;border-radius:6px}
 .metrics-bar span{white-space:nowrap}
@@ -895,6 +916,69 @@ tr:hover{background:#f8f9fa}
     # ── build ────────────────────────────────────────────────────
 
     def build(self) -> str:
+        nav_html = (
+            '<div class="layer-nav" id="layer-nav">'
+            '<div class="layer-nav-inner">'
+            '<a href="#dashboard" class="active">概览</a>'
+            '<a href="#layer-graph">协作图谱</a>'
+            '<a href="#layer-decision">决策审计</a>'
+            '<a href="#layer-evidence">证据链</a>'
+            '<a href="#layer-cost">成本治理</a>'
+            '<a href="#layer-shadow">影子智能体</a>'
+            '<a href="#layer-compliance">合规条款</a>'
+            '<a href="#layer-remediation-priority">修复优先级</a>'
+            '</div></div>'
+        )
+        scrollspy_js = (
+            '<script>'
+            '(function(){'
+            'var navLinks=document.querySelectorAll(".layer-nav a");'
+            'var sections=[];'
+            'navLinks.forEach(function(a){'
+            '  var id=a.getAttribute("href");'
+            '  if(!id)return;'
+            '  var el=document.getElementById(id.replace("#",""));'
+            '  if(el)sections.push({el:el,link:a});'
+            '});'
+            'function setActive(id){'
+            '  navLinks.forEach(function(a){a.classList.remove("active")});'
+            '  var target=document.querySelector(".layer-nav a[href=\\""+id+"\\"]");'
+            '  if(target)target.classList.add("active");'
+            '}'
+            'navLinks.forEach(function(a){'
+            '  a.addEventListener("click",function(e){'
+            '    setActive(this.getAttribute("href"));'
+            '  });'
+            '});'
+            'if(window.IntersectionObserver){'
+            '  var observer=new IntersectionObserver(function(entries){'
+            '    entries.forEach(function(entry){'
+            '      if(entry.isIntersecting){'
+            '        setActive("#"+entry.target.id);'
+            '      }'
+            '    });'
+            '  },{rootMargin:"-50% 0px -50% 0px"});'
+            '  sections.forEach(function(s){observer.observe(s.el)});'
+            '}else{'
+            '  var ticking=false;'
+            '  window.addEventListener("scroll",function(){'
+            '    if(!ticking){'
+            '      requestAnimationFrame(function(){'
+            '        var scrollPos=window.scrollY+window.innerHeight/2;'
+            '        var activeId="";'
+            '        sections.forEach(function(s){'
+            '          if(s.el.offsetTop<=scrollPos)activeId="#"+s.el.id;'
+            '        });'
+            '        if(activeId)setActive(activeId);'
+            '        ticking=false;'
+            '      });'
+            '      ticking=true;'
+            '    }'
+            '  });'
+            '}'
+            '})();'
+            '</script>'
+        )
         return (
             "<!DOCTYPE html>\n<html lang=\"zh-CN\">\n<head>\n"
             "<meta charset=\"utf-8\">\n"
@@ -903,6 +987,7 @@ tr:hover{background:#f8f9fa}
             f"<style>{self._CSS}</style>\n"
             "</head>\n<body>\n<div class=\"container\">\n"
             + self._section_header(self._r)
+            + nav_html
             + self._dashboard()
             + self._section_graph(self._r.get("graph", {}))
             + self._section_decision(self._r.get("decision", {}))
@@ -913,6 +998,7 @@ tr:hover{background:#f8f9fa}
             + self._section_compliance_mapping()
             + self._section_remediation_priority()
             + self._section_footer()
+            + scrollspy_js
             + "</div>\n</body>\n</html>"
         )
 
