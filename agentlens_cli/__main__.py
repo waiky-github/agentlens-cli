@@ -924,6 +924,44 @@ def build_cmd_watchdog(subparsers):
     p.set_defaults(func=cmd_watchdog)
 
 
+def build_cmd_serve(subparsers):
+    """Register the `serve` subcommand."""
+    p = subparsers.add_parser("serve", help="启动 Web 服务（REST API + 浏览器操作界面）")
+    p.add_argument(
+        "--host", default="127.0.0.1",
+        help="监听地址 (default: 127.0.0.1)",
+    )
+    p.add_argument(
+        "--port", type=int, default=8000,
+        help="监听端口 (default: 8000)",
+    )
+    p.add_argument(
+        "--report-dir", default=None,
+        help="报告目录路径 (default: ~/.hermes/agentlens-reports)",
+    )
+    p.set_defaults(func=cmd_serve)
+
+
+def cmd_serve(args):
+    """Execute the `serve` subcommand — start FastAPI web server."""
+    try:
+        import uvicorn
+    except ImportError:
+        print("Error: web dependencies not installed. Run: pip install agentlens-audit[web]", file=sys.stderr)
+        sys.exit(1)
+
+    if args.report_dir:
+        os.environ["AGENTLENS_REPORT_DIR"] = args.report_dir
+
+    print(f"Starting AgentLens Web server on http://{args.host}:{args.port}", file=sys.stderr)
+    uvicorn.run(
+        "agentlens_cli.web:app",
+        host=args.host,
+        port=args.port,
+        log_level="info",
+    )
+
+
 def cmd_watchdog(args):
     """Execute the `watchdog` subcommand."""
     input_path = args.input
@@ -1045,6 +1083,7 @@ def main():
     build_cmd_regs(subparsers)
     build_cmd_remediations(subparsers)
     build_cmd_watchdog(subparsers)
+    build_cmd_serve(subparsers)
 
     args = parser.parse_args()
     if args.command is None:

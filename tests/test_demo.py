@@ -1,6 +1,7 @@
 """Tests for the demo subcommand: generates HTML with required sections."""
 
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -89,9 +90,17 @@ class TestDemo:
                 html = fh.read()
             # Allow SVG namespace xmlns="http://www.w3.org/2000/svg" (standard XML namespace, not a resource load)
             html_no_svg_ns = html.replace('xmlns="http://www.w3.org/2000/svg"', "")
-            assert "http://" not in html_no_svg_ns, "demo HTML contains http:// reference"
-            assert "https://" not in html_no_svg_ns, "demo HTML contains https:// reference"
-            assert "<script" not in html.lower(), "demo HTML contains <script>"
+            # Allow whitelisted ECharts CDN (dashboard option B, explicit product decision)
+            html_no_cdn = html_no_svg_ns.replace(
+                'https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js', ""
+            )
+            assert "http://" not in html_no_cdn, "demo HTML contains http:// reference"
+            assert "https://" not in html_no_cdn, "demo HTML contains https:// reference"
+            # Exactly two <script> tags: ECharts CDN loader + dashboard init.
+            script_count = len(re.findall(r"<script", html_no_cdn.lower()))
+            assert script_count == 2, (
+                f"expected 2 <script> (ECharts CDN + dashboard init), got {script_count}"
+            )
         finally:
             os.unlink(tmp)
 
