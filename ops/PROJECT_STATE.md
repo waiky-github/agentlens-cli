@@ -53,7 +53,7 @@
 | systemd user unit | 作用 | 状态 |
 |:--|:--|:--|
 | agentlens-audit.timer（→agentlens-audit.service） | 每天 03:00 增量审计近 1 天 gateway 日志（5 个 profile 合并）→ HTML 报告 + watchdog 基线；漂移退出码 1 + **推飞书**（hermes send） | enabled + active |
-| agentlens-web.service | `serve --port 8010`（127.0.0.1），Web 仪表盘 + 报告查看 + 触发审计 API | enabled + active（PID 2291132 起） |
+| agentlens-web.service | `serve --host 0.0.0.0 --port 8010`，Web 仪表盘 + 报告查看 + 触发审计 API；**Basic Auth**（admin + 随机密码，凭据文件 ~/.hermes/agentlens-web-cred 600，EnvironmentFile 注入） | enabled + active |
 - 报告目录：`~/.hermes/agentlens-reports/`（audit-YYYYMMDD.html + baseline.json）
 - 转换器：scripts/convert_gateway_log.py（丢弃 msg 原文、用户 ID→user:unknown）；调度：scripts/run_daily_audit.sh（DAYS=1，漂移分支 hermes send -t feishu）
 - 端口：liuyao 8000 / agentlens-web 8010 / agentlens-mcp 8765 / hermes-stats 3001
