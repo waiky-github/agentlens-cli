@@ -42,6 +42,12 @@ DEFAULT_KNOWN_AGENTS = [
     "decision-auditor",
     "cost-analyst",
     "evidence-verifier",
+    # 系统内部来源：日志流自身标识（source: hermes:gateway:log），非 agent。
+    # 2026-09-09 端到端验证补充：检出 hermes:gateway:log 被误判为影子 agent，
+    # 实为事件流的 source 字段，不是运行中的智能体，加入白名单。
+    # 注：外部消息用户（user:unknown / user:ou_xxx 飞书 open_id）已由
+    # shadow.py 的 EXTERNAL_USER_PREFIXES 前缀规则统一豁免，不在此硬编码。
+    "hermes:gateway:log",
 ]
 
 # Dangerous tools that require explicit approval before execution.
