@@ -4,6 +4,8 @@
 """
 
 import base64
+import csv
+import io
 import json
 import os
 import re
@@ -189,6 +191,180 @@ def _parse_html_report(html_content: str) -> dict:
         result["avoidable_cost_ratio"] = float(m.group(1)) / 100.0
 
     return result
+
+
+def _extract_embedded_findings(html_content: str) -> list[dict]:
+    """Extract the full findings list embedded as JSON in the report.
+
+    The report embeds `<script id="findings-data" type="application/json">`
+    with the complete findings from all layers. Returns [] if absent.
+    """
+    m = re.search(
+        r'<script id="findings-data" type="application/json">(.*?)</script>',
+        html_content,
+        re.DOTALL,
+    )
+    if not m:
+        return []
+    try:
+        data = json.loads(m.group(1))
+    except (json.JSONDecodeError, TypeError):
+        return []
+    if not isinstance(data, list):
+        return []
+    return data
+
+
+def _parse_html_findings(html_content: str) -> list[dict]:
+    """Parse individual findings from an audit HTML report.
+
+    Returns a list of dicts, each with keys: layer, severity, title,
+    est_wasted_cost, detail, recommendation, regulation_refs, remediation,
+    count (N>1 for aggregated findings).
+
+    The finding unique key is (layer, title).
+    """
+    findings: list[dict] = []
+    layer_names = {
+        "layer-graph": "协作图谱",
+        "layer-decision": "决策审计",
+        "layer-evidence": "证据链",
+        "layer-cost": "成本治理",
+        "layer-shadow": "影子智能体",
+        "layer-compliance": "决策权限合规",
+    }
+
+    # Split into layer sections
+    sections = re.split(r'<div class="section" id="(layer-\w+)"', html_content)
+    for i in range(1, len(sections), 2):
+        layer_id = sections[i]
+        layer_name = layer_names.get(layer_id, layer_id)
+        section_html = sections[i + 1] if i + 1 < len(sections) else ""
+
+        # Find all finding blocks (both .finding and .finding-group)
+        # .finding-group blocks (aggregated with <details>)
+        for m in re.finditer(
+            r'<details class="finding-group"[^>]*data-severity="(\w+)"[^>]*>'
+            r'(.*?)</details>',
+            section_html,
+            re.DOTALL,
+        ):
+            block = m.group(2)
+            finding = _extract_single_finding(block, m.group(1), layer_name)
+            if finding:
+                # Check for aggregation count
+                count_m = re.search(r'<span class="finding-count">x(\d+)\s*条</span>', block)
+                if count_m:
+                    finding["count"] = int(count_m.group(1))
+                findings.append(finding)
+
+        # .finding blocks (single findings)
+        # The severity is inside the block, not as a data attribute.
+        # Use a depth-based approach to handle nested divs inside findings.
+        pos = 0
+        while True:
+            start_m = re.search(r'<div class="finding"[^>]*>', section_html[pos:])
+            if not start_m:
+                break
+            block_start = pos + start_m.end()
+            # Find matching </div> by counting depth
+            depth = 1
+            i = block_start
+            while i < len(section_html) and depth > 0:
+                next_open = section_html.find("<div", i)
+                next_close = section_html.find("</div>", i)
+                if next_close == -1:
+                    break
+                if next_open != -1 and next_open < next_close:
+                    depth += 1
+                    i = next_open + 4
+                else:
+                    depth -= 1
+                    if depth == 0:
+                        block_end = next_close
+                        break
+                    i = next_close + 6
+            else:
+                # No matching close found
+                pos = block_start
+                continue
+
+            block = section_html[block_start:block_end]
+            # Extract severity from span
+            sev_m = re.search(r'<span class="finding-sev"[^>]*>(\w+)</span>', block)
+            sev = sev_m.group(1).lower() if sev_m else "info"
+            finding = _extract_single_finding(block, sev, layer_name)
+            if finding:
+                finding["count"] = 1
+                findings.append(finding)
+            pos = block_end + 6
+
+    return findings
+
+
+def _extract_single_finding(block: str, severity: str, layer: str) -> dict | None:
+    """Extract fields from a single finding block HTML."""
+    # Title from <strong>...</strong>
+    title_m = re.search(r"<strong>(.+?)</strong>", block)
+    if not title_m:
+        return None
+    title = html_decode(title_m.group(1))
+
+    finding: dict = {
+        "layer": layer,
+        "severity": severity,
+        "title": title,
+        "est_wasted_cost": None,
+        "detail": "",
+        "recommendation": "",
+        "regulation_refs": [],
+        "remediation": [],
+        "count": 1,
+    }
+
+    # Est wasted cost
+    waste_m = re.search(r"预估浪费[：:]\s*([\d.]+)\s*CNY", block)
+    if waste_m:
+        finding["est_wasted_cost"] = float(waste_m.group(1))
+
+    # Detail
+    detail_m = re.search(r'<p class="finding-detail">(.+?)</p>', block, re.DOTALL)
+    if detail_m:
+        finding["detail"] = html_decode(strip_tags(detail_m.group(1)))
+
+    # Recommendation
+    rec_m = re.search(r'<p class="finding-rec">建议[：:]\s*(.+?)</p>', block, re.DOTALL)
+    if rec_m:
+        finding["recommendation"] = html_decode(strip_tags(rec_m.group(1)))
+
+    # Regulation refs
+    regs_block = re.search(
+        r'<div class="finding-regs">(.*?)</div>', block, re.DOTALL
+    )
+    if regs_block:
+        for li in re.finditer(r"<li>(.+?)</li>", regs_block.group(1), re.DOTALL):
+            finding["regulation_refs"].append(html_decode(strip_tags(li.group(1))))
+
+    # Remediation
+    rems_block = re.search(
+        r'<div class="finding-rems">(.*?)</div>', block, re.DOTALL
+    )
+    if rems_block:
+        for li in re.finditer(r"<li>(.+?)</li>", rems_block.group(1), re.DOTALL):
+            finding["remediation"].append(html_decode(strip_tags(li.group(1))))
+
+    return finding
+
+
+def html_decode(text: str) -> str:
+    """Decode HTML entities."""
+    import html as _html
+    return _html.unescape(text)
+
+
+def strip_tags(text: str) -> str:
+    """Remove HTML tags from text."""
+    return re.sub(r"<[^>]+>", "", text).strip()
 
 
 def _list_report_files() -> list[dict]:
@@ -852,11 +1028,42 @@ def _build_reports_list() -> str:
             f'<td class="num">{size_kb} KB</td>'
             f'<td>'
             f'<a href="/reports/{r["date"]}" class="btn btn-primary btn-sm">查看</a> '
+            f'<a href="/api/reports/{r["date"]}/findings.csv" class="btn btn-ghost btn-sm">导出 CSV</a> '
             f'<a href="/api/reports/{r["date"]}/html" class="btn btn-ghost btn-sm">原始 HTML</a>'
             f'</td></tr>'
         )
 
     content = (
+        f'<div class="card" style="margin-bottom:16px"><h2>对比报告</h2>'
+        f'<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">'
+        f'<select id="compare-base" style="padding:8px 12px;border:1px solid var(--border);'
+        f'border-radius:6px;background:var(--bg-primary);color:var(--text-primary);font-size:13px">'
+        f'<option value="">选择基线报告…</option>'
+        + "".join(
+            f'<option value="{r["date"]}">{r["date"][:4]}-{r["date"][4:6]}-{r["date"][6:8]}</option>'
+            for r in reports
+        )
+        + f'</select>'
+        f'<span style="color:var(--text-secondary)">vs</span>'
+        f'<select id="compare-curr" style="padding:8px 12px;border:1px solid var(--border);'
+        f'border-radius:6px;background:var(--bg-primary);color:var(--text-primary);font-size:13px">'
+        f'<option value="">选择当前报告…</option>'
+        + "".join(
+            f'<option value="{r["date"]}">{r["date"][:4]}-{r["date"][4:6]}-{r["date"][6:8]}</option>'
+            for r in reports
+        )
+        + f'</select>'
+        f'<button onclick="doCompare()" class="btn btn-primary btn-sm">对比</button>'
+        f'</div>'
+        f'<script>'
+        f'function doCompare(){{'
+        f'var b=document.getElementById("compare-base").value;'
+        f'var c=document.getElementById("compare-curr").value;'
+        f'if(b&&c)window.location.href="/reports/compare?base="+b+"&curr="+c;'
+        f'else alert("请选择两份报告日期");'
+        f'}}'
+        f'</script>'
+        f'</div>'
         f'<div class="card"><h2>全部报告 ({len(reports)})</h2>'
         f'<div class="search-box">'
         f'<input type="text" id="report-search" placeholder="按日期搜索（如 20260909 或 09-09）…" '
@@ -953,6 +1160,7 @@ def _build_report_detail(date: str) -> HTMLResponse:
     date_formatted = f"{date[:4]}-{date[4:6]}-{date[6:8]}"
     topbar_extra = (
         f'<span style="font-size:13px;color:var(--text-secondary)">{date_formatted}</span>'
+        f'<a href="/api/reports/{date}/findings.csv" class="btn btn-ghost btn-sm">导出 CSV</a>'
         f'<a href="/api/reports/{date}/html" class="btn btn-ghost btn-sm">原始 HTML</a>'
         f'<a href="/reports" class="btn btn-primary btn-sm">返回列表</a>'
     )
@@ -1055,6 +1263,238 @@ def _build_report_detail(date: str) -> HTMLResponse:
             topbar_title=f"{date_formatted} 审计报告",
             topbar_extra=topbar_extra,
             extra_head=scoped_style if report_body else "",
+        )
+    )
+
+
+# ── Report compare page ──────────────────────────────────────────
+
+def _build_report_compare(base: str, curr: str) -> HTMLResponse:
+    """Build a findings comparison page between two reports."""
+    base_path = _get_report_path(base)
+    curr_path = _get_report_path(curr)
+
+    if base_path is None:
+        return HTMLResponse(
+            content=_base_page("报告未找到", f'<div class="card"><h2>报告未找到</h2>'
+                               f'<p class="empty">基线日期 {base} 的报告不存在</p>'
+                               f'<p style="margin-top:12px"><a href="/reports" class="btn btn-primary">返回报告列表</a></p></div>',
+                               active_nav="/reports", topbar_title="报告未找到"),
+            status_code=404,
+        )
+    if curr_path is None:
+        return HTMLResponse(
+            content=_base_page("报告未找到", f'<div class="card"><h2>报告未找到</h2>'
+                               f'<p class="empty">当前日期 {curr} 的报告不存在</p>'
+                               f'<p style="margin-top:12px"><a href="/reports" class="btn btn-primary">返回报告列表</a></p></div>',
+                               active_nav="/reports", topbar_title="报告未找到"),
+            status_code=404,
+        )
+
+    base_html = base_path.read_text(encoding="utf-8")
+    curr_html = curr_path.read_text(encoding="utf-8")
+
+    base_findings = _extract_embedded_findings(base_html)
+    if not base_findings:
+        base_findings = _parse_html_findings(base_html)
+    curr_findings = _extract_embedded_findings(curr_html)
+    if not curr_findings:
+        curr_findings = _parse_html_findings(curr_html)
+
+    # Build unique key sets
+    base_keys: dict[tuple, dict] = {}
+    for f in base_findings:
+        key = (f["layer"], f["title"])
+        if key not in base_keys:
+            base_keys[key] = f
+        else:
+            base_keys[key]["count"] = base_keys[key].get("count", 1) + 1
+
+    curr_keys: dict[tuple, dict] = {}
+    for f in curr_findings:
+        key = (f["layer"], f["title"])
+        if key not in curr_keys:
+            curr_keys[key] = f
+        else:
+            curr_keys[key]["count"] = curr_keys[key].get("count", 1) + 1
+
+    base_set = set(base_keys.keys())
+    curr_set = set(curr_keys.keys())
+
+    only_base = base_set - curr_set  # fixed
+    only_curr = curr_set - base_set  # new
+    common = base_set & curr_set     # persistent
+
+    base_fmt = f"{base[:4]}-{base[4:6]}-{base[6:8]}"
+    curr_fmt = f"{curr[:4]}-{curr[4:6]}-{curr[6:8]}"
+
+    # Summary cards
+    base_total = len(base_keys)
+    curr_total = len(curr_keys)
+    new_count = len(only_curr)
+    fixed_count = len(only_base)
+    persistent_count = len(common)
+
+    base_waste = sum((f.get("est_wasted_cost") or 0) for f in base_keys.values())
+    curr_waste = sum((f.get("est_wasted_cost") or 0) for f in curr_keys.values())
+    waste_delta = curr_waste - base_waste
+
+    def _sev_badge(sev: str) -> str:
+        colors = {"high": "badge-err", "medium": "badge-warn", "low": "badge-info", "info": "badge-info"}
+        return f'<span class="badge {colors.get(sev, "badge-info")}">{sev.upper()}</span>'
+
+    def _layer_badge(layer: str) -> str:
+        colors = {
+            "协作图谱": "badge-info", "决策审计": "badge-warn", "证据链": "badge-ok",
+            "成本治理": "badge-err", "影子智能体": "badge-err", "决策权限合规": "badge-warn",
+        }
+        return f'<span class="badge {colors.get(layer, "badge-info")}">{layer}</span>'
+
+    def _waste_str(waste_val) -> str:
+        if waste_val is None:
+            return "-"
+        return f"{waste_val:.2f}"
+
+    def _render_table_rows(keys, findings_map, tag: str, tag_class: str):
+        rows = []
+        for key in sorted(keys, key=lambda k: (findings_map[k].get("est_wasted_cost") or 0), reverse=True):
+            f = findings_map[key]
+            waste = f.get("est_wasted_cost")
+
+            if tag == "persistent":
+                # Show both baseline and current waste with delta
+                base_f = base_keys.get(key)
+                base_w = base_f.get("est_wasted_cost") if base_f else None
+                curr_w = waste
+                if base_w is not None and curr_w is not None:
+                    delta = curr_w - base_w
+                    if delta > 0.005:
+                        arrow = " ↑"
+                    elif delta < -0.005:
+                        arrow = " ↓"
+                    else:
+                        arrow = ""
+                    waste_cell = f'{_waste_str(base_w)} → {_waste_str(curr_w)}{arrow}'
+                else:
+                    waste_cell = f'{_waste_str(base_w)} → {_waste_str(curr_w)}'
+            else:
+                waste_cell = _waste_str(waste)
+
+            count_str = f' x{f["count"]}' if f.get("count", 1) > 1 else ""
+
+            rows.append(
+                f'<tr>'
+                f'<td><span class="badge {tag_class} tag-label">{tag}</span> '
+                f'{_layer_badge(f["layer"])}</td>'
+                f'<td>{f["title"][:80]}{"…" if len(f["title"]) > 80 else ""}{count_str}</td>'
+                f'<td>{_sev_badge(f["severity"])}</td>'
+                f'<td class="num">{waste_cell}</td>'
+                f'</tr>'
+            )
+        return "".join(rows) if rows else '<tr><td colspan="4" class="empty">无</td></tr>'
+
+    # All rows combined for "all" tab
+    all_rows = []
+    all_rows.append(_render_table_rows(only_curr, curr_keys, "新增", "badge-err"))
+    all_rows.append(_render_table_rows(only_base, base_keys, "已修复", "badge-ok"))
+    all_rows.append(_render_table_rows(common, curr_keys, "持续", "badge-warn"))
+
+    # Tab content
+    new_rows = _render_table_rows(only_curr, curr_keys, "新增", "badge-err")
+    fixed_rows = _render_table_rows(only_base, base_keys, "已修复", "badge-ok")
+    persistent_rows = _render_table_rows(common, curr_keys, "持续", "badge-warn")
+
+    waste_delta_str = f"{waste_delta:+.2f}" if waste_delta else "0.00"
+    waste_delta_color = "var(--danger)" if waste_delta > 0 else ("var(--success)" if waste_delta < 0 else "var(--text-secondary)")
+
+    summary_cards = (
+        f'<div class="kpi-grid" style="grid-template-columns:repeat(6,1fr)">'
+        f'<div class="kpi-card"><div class="kpi-accent blue"></div>'
+        f'<div class="kpi-label">基线发现数</div><div class="kpi-value">{base_total}</div>'
+        f'<div class="kpi-sub">{base_fmt}</div></div>'
+        f'<div class="kpi-card"><div class="kpi-accent blue"></div>'
+        f'<div class="kpi-label">当前发现数</div><div class="kpi-value">{curr_total}</div>'
+        f'<div class="kpi-sub">{curr_fmt}</div></div>'
+        f'<div class="kpi-card"><div class="kpi-accent red"></div>'
+        f'<div class="kpi-label">新增</div><div class="kpi-value">{new_count}</div></div>'
+        f'<div class="kpi-card"><div class="kpi-accent green"></div>'
+        f'<div class="kpi-label">已修复</div><div class="kpi-value">{fixed_count}</div></div>'
+        f'<div class="kpi-card"><div class="kpi-accent orange"></div>'
+        f'<div class="kpi-label">持续存在</div><div class="kpi-value">{persistent_count}</div></div>'
+        f'<div class="kpi-card"><div class="kpi-accent purple"></div>'
+        f'<div class="kpi-label">预估浪费变化</div>'
+        f'<div class="kpi-value" style="color:{waste_delta_color}">{waste_delta_str}</div>'
+        f'<div class="kpi-sub">CNY</div></div>'
+        f'</div>'
+    )
+
+    table_html = (
+        f'<div class="card"><h2>发现对比</h2>'
+        f'<div class="tab-bar" style="display:flex;gap:4px;margin-bottom:16px">'
+        f'<button class="tab-btn active" data-tab="all">全部 ({base_total + curr_total - persistent_count})</button>'
+        f'<button class="tab-btn" data-tab="new">新增 ({new_count})</button>'
+        f'<button class="tab-btn" data-tab="fixed">已修复 ({fixed_count})</button>'
+        f'<button class="tab-btn" data-tab="persistent">持续存在 ({persistent_count})</button>'
+        f'</div>'
+        f'<table id="compare-table"><thead><tr>'
+        f'<th>分类</th><th>标题</th><th>严重度</th><th>预估浪费 CNY</th>'
+        f'</tr></thead>'
+        f'<tbody id="tab-all">{"".join(all_rows)}</tbody>'
+        f'<tbody id="tab-new" style="display:none">{new_rows}</tbody>'
+        f'<tbody id="tab-fixed" style="display:none">{fixed_rows}</tbody>'
+        f'<tbody id="tab-persistent" style="display:none">{persistent_rows}</tbody>'
+        f'</table></div>'
+    )
+
+    empty_state = (
+        f'<div class="empty-big"><div class="empty-icon">📋</div>'
+        f'<div class="empty-text">两份报告均无发现</div></div>'
+    )
+
+    content = (
+        f'<div class="breadcrumb" style="margin-bottom:16px">'
+        f'<a href="/reports">← 返回列表</a>'
+        f'<span class="sep">|</span>'
+        f'<span>报告对比</span>'
+        f'<span class="sep">|</span>'
+        f'<span>{base_fmt} vs {curr_fmt}</span>'
+        f'</div>'
+        + (summary_cards + table_html if base_total > 0 or curr_total > 0 else empty_state)
+        + (
+            '<style>'
+            '.tab-bar .tab-btn{padding:6px 16px;border-radius:6px;font-size:13px;'
+            'border:1px solid var(--border);background:transparent;color:var(--text-secondary);'
+            'cursor:pointer;transition:all 0.15s}'
+            '.tab-bar .tab-btn:hover{background:var(--bg-panel);color:var(--text-primary)}'
+            '.tab-bar .tab-btn.active{background:var(--brand);color:#fff;border-color:var(--brand)}'
+            '.tag-label{font-size:10px;margin-right:4px}'
+            '</style>'
+            '<script>'
+            '(function(){'
+            'var btns=document.querySelectorAll(".tab-btn");'
+            'btns.forEach(function(b){'
+            '  b.addEventListener("click",function(){'
+            '    btns.forEach(function(x){x.classList.remove("active")});'
+            '    this.classList.add("active");'
+            '    var tab=this.dataset.tab;'
+            '    document.querySelectorAll("#compare-table tbody").forEach(function(t){'
+            '      t.style.display="none";'
+            '    });'
+            '    var target=document.getElementById("tab-"+tab);'
+            '    if(target)target.style.display="";'
+            '  });'
+            '});'
+            '})();'
+            '</script>'
+        )
+    )
+
+    return HTMLResponse(
+        content=_base_page(
+            "报告对比", content, active_nav="/reports", full_width=True,
+            topbar_title="报告对比",
+            topbar_extra=f'<span style="font-size:13px;color:var(--text-secondary)">{base_fmt} vs {curr_fmt}</span>'
+            f'<a href="/reports" class="btn btn-ghost btn-sm">返回列表</a>',
         )
     )
 
@@ -1229,6 +1669,88 @@ async def api_report_html(date: str):
         raise HTTPException(status_code=500, detail=f"Failed to read report: {e}")
 
 
+@app.get("/api/reports/{date}/findings.csv")
+async def api_report_findings_csv(date: str):
+    """Export report findings as CSV (UTF-8-sig, Excel-compatible)."""
+    path = _get_report_path(date)
+    if path is None:
+        raise HTTPException(status_code=404, detail=f"Report not found for date: {date}")
+
+    try:
+        html = path.read_text(encoding="utf-8")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read report: {e}")
+
+    findings = _extract_embedded_findings(html)
+    if not findings:
+        findings = _parse_html_findings(html)
+
+    # Aggregate by (layer, title) same as P0-1
+    groups: dict[tuple, dict] = {}
+    for f in findings:
+        key = (f["layer"], f["title"])
+        if key not in groups:
+            groups[key] = dict(f)
+            groups[key]["count"] = f.get("count", 1)
+        else:
+            groups[key]["count"] = groups[key].get("count", 1) + f.get("count", 1)
+            # Keep the higher est_wasted_cost
+            if (f.get("est_wasted_cost") or 0) > (groups[key].get("est_wasted_cost") or 0):
+                groups[key]["est_wasted_cost"] = f.get("est_wasted_cost")
+
+    date_fmt = f"{date[:4]}-{date[4:6]}-{date[6:8]}"
+    output = io.StringIO()
+    writer = csv.writer(output, quoting=csv.QUOTE_ALL)
+
+    # Header
+    writer.writerow([
+        "日期", "层名", "严重度", "标题", "预估浪费 CNY",
+        "出现次数", "建议", "法规依据", "修复建议",
+    ])
+
+    for (layer, title), f in sorted(groups.items(), key=lambda x: (x[1].get("est_wasted_cost") or 0), reverse=True):
+        writer.writerow([
+            date_fmt,
+            layer,
+            f.get("severity", "-"),
+            title,
+            f"{f['est_wasted_cost']:.6f}" if f.get("est_wasted_cost") is not None else "-",
+            str(f.get("count", 1)),
+            f.get("recommendation", "-") or "-",
+            _join_field(f.get("regulation_refs")),
+            _join_field(f.get("remediation")),
+        ])
+
+    csv_bytes = output.getvalue().encode("utf-8-sig")
+    filename = f"agentlens-findings-{date}.csv"
+
+    from fastapi.responses import Response
+    return Response(
+        content=csv_bytes,
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+def _join_field(items) -> str:
+    """Join a list of string/dict items into a single '; '-separated string.
+
+    Findings from the embedded JSON may carry dict entries (e.g. regulation
+    refs with {'ref': ...}), while the HTML-parsed path gives plain strings.
+    Normalize both before joining.
+    """
+    if not items:
+        return "-"
+    parts = []
+    for it in items:
+        if isinstance(it, dict):
+            # Prefer common readable keys
+            parts.append(str(it.get("ref") or it.get("text") or it.get("title") or it.get("name") or it))
+        else:
+            parts.append(str(it))
+    return "; ".join(p for p in parts if p) or "-"
+
+
 # ─────────────────────────────────────────────────────────────────
 # API: Audit
 # ─────────────────────────────────────────────────────────────────
@@ -1394,6 +1916,24 @@ async def page_reports():
 async def page_audit():
     """Audit trigger page with form and recent tasks."""
     return _build_audit_page()
+
+
+@app.get("/reports/compare", response_class=HTMLResponse)
+async def page_report_compare(base: str = "", curr: str = ""):
+    """Compare findings between two reports."""
+    if not base or not curr:
+        return HTMLResponse(
+            content=_base_page(
+                "参数错误",
+                '<div class="card"><h2>参数不完整</h2>'
+                '<p class="empty">请选择两份报告日期。使用方式: /reports/compare?base=YYYYMMDD&curr=YYYYMMDD</p>'
+                '<p style="margin-top:12px"><a href="/reports" class="btn btn-primary">返回报告列表</a></p></div>',
+                active_nav="/reports",
+                topbar_title="参数错误",
+            ),
+            status_code=400,
+        )
+    return _build_report_compare(base, curr)
 
 
 @app.get("/reports/{date}", response_class=HTMLResponse)

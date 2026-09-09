@@ -235,3 +235,127 @@ class TestHtmlParsing:
         meta = _parse_html_report("")
         assert meta["events"] == 0
         assert meta["findings_total"] == 0
+
+
+class TestParseHtmlFindings:
+    """Tests for _parse_html_findings."""
+
+    def test_parse_findings_from_html(self):
+        from agentlens_cli.web import _parse_html_findings
+        html = """<html>
+        <div class="section" id="layer-cost">
+        <div class="finding" style="border-left:4px solid #dc3545;background:#fff5f5">
+        <span class="finding-sev" style="background:#dc3545">HIGH</span>
+        <strong>test finding one</strong>
+        <p class="finding-rec">建议: do something</p>
+        <p class="finding-meta">预估浪费: 1.234567 CNY</p>
+        <div class="finding-regs"><span class="finding-regs-label">法规依据:</span>
+        <ul class="regs-list"><li>EU AI Act — Art. 12: logging</li></ul></div>
+        <div class="finding-rems"><span class="finding-rems-label">修复建议:</span>
+        <ul class="rems-list"><li>MEDIUM fix it</li></ul></div>
+        </div>
+        <div class="finding" style="border-left:4px solid #fd7e14;background:#fff8f0">
+        <span class="finding-sev" style="background:#fd7e14">MEDIUM</span>
+        <strong>test finding two</strong>
+        </div>
+        </div>
+        </html>"""
+        findings = _parse_html_findings(html)
+        assert len(findings) == 2
+        f1 = findings[0]
+        assert f1["layer"] == "成本治理"
+        assert f1["severity"] == "high"
+        assert f1["title"] == "test finding one"
+        assert f1["est_wasted_cost"] == 1.234567
+        assert "do something" in f1["recommendation"]
+        assert len(f1["regulation_refs"]) == 1
+        assert len(f1["remediation"]) == 1
+        f2 = findings[1]
+        assert f2["severity"] == "medium"
+        assert f2["title"] == "test finding two"
+
+    def test_parse_findings_empty(self):
+        from agentlens_cli.web import _parse_html_findings
+        findings = _parse_html_findings("")
+        assert len(findings) == 0
+
+    def test_parse_findings_no_findings(self):
+        from agentlens_cli.web import _parse_html_findings
+        html = '<div class="section" id="layer-graph"><p class="nodata">无发现项</p></div>'
+        findings = _parse_html_findings(html)
+        assert len(findings) == 0
+
+
+class TestComparePage:
+    """Tests for /reports/compare page."""
+
+    def test_compare_missing_params_returns_400(self):
+        resp = client.get("/reports/compare")
+        assert resp.status_code == 400
+        assert "请选择" in resp.text or "参数不完整" in resp.text
+
+    def test_compare_missing_base_returns_400(self):
+        resp = client.get("/reports/compare?curr=20260909")
+        assert resp.status_code == 400
+
+    def test_compare_missing_curr_returns_400(self):
+        resp = client.get("/reports/compare?base=20260909")
+        assert resp.status_code == 400
+
+    def test_compare_nonexistent_returns_404(self):
+        resp = client.get("/reports/compare?base=20000101&curr=20260909")
+        assert resp.status_code == 404
+
+    def test_compare_same_report_returns_200(self):
+        resp = client.get("/reports/compare?base=20260909&curr=20260909")
+        assert resp.status_code == 200
+        assert "text/html" in resp.headers["content-type"]
+        assert "报告对比" in resp.text
+        # Same report = all persistent, no new, no fixed
+        assert "持续存在" in resp.text
+
+
+class TestCsvExport:
+    """Tests for /api/reports/{date}/findings.csv endpoint."""
+
+    def test_csv_export_returns_200(self):
+        resp = client.get("/api/reports/20260909/findings.csv")
+        assert resp.status_code == 200
+        assert "text/csv" in resp.headers["content-type"]
+        assert "attachment" in resp.headers.get("content-disposition", "")
+
+    def test_csv_export_has_correct_headers(self):
+        resp = client.get("/api/reports/20260909/findings.csv")
+        first_line = resp.text.split("\n")[0]
+        for header in ["日期", "层名", "严重度", "标题", "预估浪费", "出现次数", "建议", "法规依据", "修复建议"]:
+            assert header in first_line, f"Missing header: {header}"
+
+    def test_csv_export_utf8_sig(self):
+        resp = client.get("/api/reports/20260909/findings.csv")
+        content = resp.content
+        assert content[:3] == b"\xef\xbb\xbf", "CSV should start with UTF-8 BOM"
+
+    def test_csv_export_nonexistent_returns_404(self):
+        resp = client.get("/api/reports/20000101/findings.csv")
+        assert resp.status_code == 404
+
+    def test_csv_export_has_data_rows(self):
+        resp = client.get("/api/reports/20260909/findings.csv")
+        lines = [l for l in resp.text.strip().split("\n") if l.strip()]
+        assert len(lines) > 1, "CSV should have header + at least 1 data row"
+
+    def test_csv_export_full_aggregation_via_embedded_json(self):
+        """CSV should use the embedded findings-data JSON (full set), not the
+        top-N rendered findings, and aggregate by (layer, title)."""
+        resp = client.get("/api/reports/20260909/findings.csv")
+        import csv as _csv
+        import io as _io
+        rows = list(_csv.reader(_io.StringIO(resp.text)))
+        assert len(rows) > 5, (
+            f"expected full aggregated findings (>5 groups), got {len(rows) - 1} data rows; "
+            "if the report only renders top-N, embedded JSON is not being used"
+        )
+        # Aggregated rows should carry an occurrence count column (col 5, 1-indexed)
+        # with at least one row having count > 1.
+        counts = [int(r[5]) for r in rows[1:] if r[5].isdigit()]
+        assert any(c > 1 for c in counts), "expected at least one aggregated finding with count > 1"

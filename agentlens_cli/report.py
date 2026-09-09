@@ -1136,6 +1136,28 @@ tr:hover{background:#f8f9fa}
             '})();'
             '</script>'
         )
+        # Embed the full findings list as JSON for programmatic consumers
+        # (CSV export, diff compare). The report itself only renders the
+        # top findings per section, so the embedded data is the complete set.
+        layer_names = {
+            "graph": "协作图谱",
+            "decision": "决策审计",
+            "evidence": "证据链",
+            "cost": "成本治理",
+            "shadow": "影子智能体",
+            "compliance": "决策权限合规",
+        }
+        all_findings = []
+        for key, layer_name in layer_names.items():
+            for f in self._r.get(key, {}).get("findings", []):
+                item = dict(f)
+                item["layer"] = layer_name
+                all_findings.append(item)
+        embedded_findings = json.dumps(all_findings, ensure_ascii=False).replace("</", "<\\/")
+        findings_data_script = (
+            f'<script id="findings-data" type="application/json">{embedded_findings}</script>'
+        )
+
         return (
             "<!DOCTYPE html>\n<html lang=\"zh-CN\">\n<head>\n"
             "<meta charset=\"utf-8\">\n"
@@ -1156,6 +1178,7 @@ tr:hover{background:#f8f9fa}
             + self._section_remediation_priority()
             + self._section_footer()
             + scrollspy_js
+            + findings_data_script
             + "</div>\n</body>\n</html>"
         )
 
