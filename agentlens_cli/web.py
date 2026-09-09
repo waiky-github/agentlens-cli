@@ -37,7 +37,41 @@ REPORT_DIR = Path(
 app = FastAPI(title="AgentLens Audit Web", version="0.2.1")
 
 # In-memory task log for /audit page
+_TASKS_FILE = REPORT_DIR / "audit-tasks.json"
 _AUDIT_TASKS: list[dict] = []
+_TASK_ID_COUNTER = 0
+
+
+def _load_tasks() -> list[dict]:
+    """Load persisted audit tasks from JSON file. Returns empty list on failure."""
+    global _TASK_ID_COUNTER
+    if not _TASKS_FILE.is_file():
+        return []
+    try:
+        data = json.loads(_TASKS_FILE.read_text(encoding="utf-8"))
+        if isinstance(data, list):
+            # Determine max id for counter
+            ids = [t.get("id", 0) for t in data if isinstance(t, dict)]
+            _TASK_ID_COUNTER = max(ids) if ids else 0
+            return data
+    except (json.JSONDecodeError, OSError):
+        pass
+    return []
+
+
+def _save_tasks():
+    """Persist audit tasks to JSON file atomically (write temp + os.replace)."""
+    try:
+        REPORT_DIR.mkdir(parents=True, exist_ok=True)
+        tmp_path = _TASKS_FILE.with_suffix(".tmp")
+        tmp_path.write_text(json.dumps(_AUDIT_TASKS, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(tmp_path, _TASKS_FILE)
+    except OSError:
+        pass
+
+
+# Load persisted tasks on module import
+_AUDIT_TASKS = _load_tasks()
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -452,7 +486,7 @@ def _time_filter_html() -> str:
 
 
 def _base_page(title: str, content: str, active_nav: str = "", full_width: bool = False,
-               topbar_title: str = "", topbar_extra: str = "") -> str:
+               topbar_title: str = "", topbar_extra: str = "", extra_head: str = "") -> str:
     """Build a complete HTML page with sidebar + topbar + content."""
     if not topbar_title:
         topbar_title = title
@@ -465,6 +499,7 @@ def _base_page(title: str, content: str, active_nav: str = "", full_width: bool 
         "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n"
         f"<title>{title} — AgentLens Audit</title>\n"
         f"<style>{_CSS_DARK}</style>\n"
+        f"{extra_head}\n"
         "</head>\n<body>\n"
         f'<div class="app-layout">\n'
         + ("" if full_width else _sidebar_html(active_nav))
@@ -922,18 +957,96 @@ def _build_report_detail(date: str) -> HTMLResponse:
         f'<a href="/reports" class="btn btn-primary btn-sm">返回列表</a>'
     )
 
-    content = (
-        f'<div class="breadcrumb" style="margin-bottom:16px">'
-        f'<a href="/reports">← 返回列表</a>'
-        f'<span class="sep">|</span>'
-        f'<span>{date_formatted} 审计报告</span>'
-        f'<a href="/api/reports/{date}/html" style="margin-left:auto" class="btn btn-ghost btn-sm">原始 HTML</a>'
-        f'</div>'
-        f'<div class="iframe-wrap">'
-        f'<iframe src="/api/reports/{date}/html" '
-        f'sandbox="allow-scripts allow-same-origin"></iframe>'
-        f'</div>'
-    )
+    # Read report HTML and extract body + style for inline embedding
+    try:
+        raw_html = path.read_text(encoding="utf-8")
+    except Exception:
+        raw_html = ""
+
+    report_body = ""
+    report_style = ""
+    try:
+        # Extract <style>...</style> blocks
+        style_matches = re.findall(r"<style[^>]*>(.*?)</style>", raw_html, re.DOTALL)
+        if style_matches:
+            report_style = "\n".join(style_matches)
+
+        # Extract <body>...</body> content
+        body_match = re.search(r"<body[^>]*>(.*?)</body>", raw_html, re.DOTALL)
+        if body_match:
+            report_body = body_match.group(1)
+        else:
+            # Fallback: use everything between <body> and </html>
+            body_match = re.search(r"<body[^>]*>(.*?)</html>", raw_html, re.DOTALL)
+            if body_match:
+                report_body = body_match.group(1)
+
+        # Extract <script>...</script> blocks and wrap in IIFE
+        script_matches = re.findall(r"<script[^>]*>(.*?)</script>", raw_html, re.DOTALL)
+        inline_scripts = []
+        for script_content in script_matches:
+            # Wrap in IIFE to avoid global variable conflicts with site scripts
+            # Skip the ECharts CDN loader (empty or just src)
+            if script_content.strip():
+                inline_scripts.append(
+                    f"<script>(function(){{\n{script_content}\n}})();</script>"
+                )
+        # Also include the ECharts CDN <script src="...">
+        cdn_matches = re.findall(r'<script[^>]*src="[^"]*echarts[^"]*"[^>]*></script>', raw_html)
+        cdn_script = cdn_matches[0] if cdn_matches else ""
+    except Exception:
+        report_body = ""
+        report_style = ""
+        inline_scripts = []
+        cdn_script = ""
+
+    if not report_body:
+        # Fallback: iframe
+        content = (
+            f'<div class="breadcrumb" style="margin-bottom:16px">'
+            f'<a href="/reports">← 返回列表</a>'
+            f'<span class="sep">|</span>'
+            f'<span>{date_formatted} 审计报告</span>'
+            f'<a href="/api/reports/{date}/html" style="margin-left:auto" class="btn btn-ghost btn-sm">原始 HTML</a>'
+            f'</div>'
+            f'<div class="result-box info" style="margin-bottom:12px">'
+            f'报告解析失败，使用 iframe 回退显示</div>'
+            f'<div class="iframe-wrap">'
+            f'<iframe src="/api/reports/{date}/html" '
+            f'sandbox="allow-scripts allow-same-origin"></iframe>'
+            f'</div>'
+        )
+    else:
+        # Scoped report CSS: prefix all selectors with .report-frame to avoid leaking
+        # into the site's dark theme
+        scoped_style = (
+            f'<style>\n'
+            f'.report-frame {{\n'
+            f'  background:#fff;color:#2d3436;font-family:-apple-system,BlinkMacSystemFont,'
+            f'"Segoe UI",Helvetica,Arial,sans-serif;line-height:1.6;\n'
+            f'  border-radius:8px;border:1px solid var(--border);'
+            f'  box-shadow:0 4px 20px rgba(0,0,0,0.3);\n'
+            f'  padding:20px;overflow-x:auto;\n'
+            f'}}\n'
+            f'.report-frame .container{{max-width:100%;margin:0}}\n'
+            f'.report-frame body{{background:#fff;color:#2d3436}}\n'
+            f'{report_style}\n'
+            f'</style>'
+        )
+
+        content = (
+            f'<div class="breadcrumb" style="margin-bottom:16px">'
+            f'<a href="/reports">← 返回列表</a>'
+            f'<span class="sep">|</span>'
+            f'<span>{date_formatted} 审计报告</span>'
+            f'<a href="/api/reports/{date}/html" style="margin-left:auto" class="btn btn-ghost btn-sm">原始 HTML</a>'
+            f'</div>'
+            f'<div class="report-frame">\n'
+            f'{report_body}\n'
+            f'</div>'
+            f'{cdn_script}\n'
+            + "\n".join(inline_scripts)
+        )
 
     return HTMLResponse(
         content=_base_page(
@@ -941,6 +1054,7 @@ def _build_report_detail(date: str) -> HTMLResponse:
             active_nav="/reports", full_width=True,
             topbar_title=f"{date_formatted} 审计报告",
             topbar_extra=topbar_extra,
+            extra_head=scoped_style if report_body else "",
         )
     )
 
@@ -1142,13 +1256,20 @@ async def api_audit_run(request: Request):
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
 
     task_time = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    global _TASK_ID_COUNTER
+    _TASK_ID_COUNTER += 1
     task_entry = {
+        "id": _TASK_ID_COUNTER,
         "time": task_time,
         "input": input_path,
         "status": "running",
         "report_url": None,
     }
     _AUDIT_TASKS.append(task_entry)
+    # Keep only 50 most recent
+    if len(_AUDIT_TASKS) > 50:
+        _AUDIT_TASKS[:] = _AUDIT_TASKS[-50:]
+    _save_tasks()
 
     # Run audit via subprocess
     cmd = [
@@ -1167,18 +1288,21 @@ async def api_audit_run(request: Request):
         )
         if proc.returncode != 0:
             task_entry["status"] = "error"
+            _save_tasks()
             return JSONResponse(
                 status_code=500,
                 content={"status": "error", "detail": proc.stderr.strip() or proc.stdout.strip()},
             )
     except subprocess.TimeoutExpired:
         task_entry["status"] = "error"
+        _save_tasks()
         return JSONResponse(
             status_code=500,
             content={"status": "error", "detail": "Audit timed out after 300 seconds"},
         )
     except Exception as e:
         task_entry["status"] = "error"
+        _save_tasks()
         return JSONResponse(
             status_code=500,
             content={"status": "error", "detail": str(e)},
@@ -1187,6 +1311,7 @@ async def api_audit_run(request: Request):
     report_url = f"/reports/{today}"
     task_entry["status"] = "ok"
     task_entry["report_url"] = report_url
+    _save_tasks()
 
     return {
         "status": "ok",

@@ -426,81 +426,113 @@ class _HtmlBuilder:
 
     # ── findings list ────────────────────────────────────────────
 
+    def _render_finding_detail(self, f: dict) -> str:
+        """Render the detail portion of a single finding (without the card wrapper)."""
+        parts = []
+        detail = f.get("detail", "")
+        if detail:
+            parts.append(f'<p class="finding-detail">{self._esc(str(detail))}</p>')
+        rec = f.get("recommendation", "")
+        if rec:
+            parts.append(f'<p class="finding-rec">建议: {self._esc(rec)}</p>')
+        tool = f.get("tool", "")
+        if tool:
+            parts.append(f'<p class="finding-meta">工具: {self._esc(tool)}</p>')
+        waste = f.get("est_wasted_cost")
+        if waste is not None and waste > 0:
+            parts.append(f'<p class="finding-meta">预估浪费: {waste:.6f} CNY</p>')
+        # Regulation references
+        regs = f.get("regulation_refs", [])
+        if regs:
+            parts.append('<div class="finding-regs">')
+            parts.append('<span class="finding-regs-label">法规依据:</span>')
+            parts.append('<ul class="regs-list">')
+            for ref in regs:
+                regulation = ref.get("regulation", "unknown")
+                article = ref.get("article", "")
+                clause = ref.get("clause", "")
+                note = ref.get("note", "")
+                if note:
+                    parts.append(f"<li>{self._esc(regulation)} — {self._esc(note)}</li>")
+                else:
+                    parts.append(f"<li>{self._esc(regulation)} — {self._esc(article)}: {self._esc(clause)}</li>")
+            parts.append("</ul></div>")
+        # Remediation suggestions
+        rems = f.get("remediation", [])
+        if rems:
+            parts.append('<div class="finding-rems">')
+            parts.append('<span class="finding-rems-label">修复建议:</span>')
+            parts.append('<ul class="rems-list">')
+            for rem in rems:
+                priority = rem.get("priority", "medium")
+                action = rem.get("action", "")
+                detail = rem.get("detail", "")
+                pri_color = self._severity_color(priority) if priority in ("high", "medium", "low") else "#6c757d"
+                parts.append(
+                    f'<li>'
+                    f'<span class="rems-pri" style="background:{pri_color}">{priority.upper()}</span> '
+                    f'<strong>{self._esc(action)}</strong>'
+                )
+                if detail:
+                    parts.append(f'<br><span class="rems-detail">{self._esc(detail)}</span>')
+                parts.append('</li>')
+            parts.append("</ul></div>")
+        return "".join(parts)
+
     def _render_findings(self, findings: list) -> str:
         if not findings:
             return "<p class='nodata'>无发现项</p>"
-        severity_order = {"high": 0, "medium": 1, "low": 2, "info": 3}
-        sorted_f = sorted(
-            findings,
-            key=lambda x: (severity_order.get(x.get("severity", "info"), 99), x.get("title", "")),
-        )
+
+        # Group by title (aggregation: same finding deduplicated)
+        groups: dict[str, list[dict]] = {}
+        for f in findings:
+            title = f.get("title", "")
+            groups.setdefault(title, []).append(f)
+
+        # Sort groups by max est_wasted_cost descending
+        def _group_max_cost(group: list) -> float:
+            return max((item.get("est_wasted_cost", 0) or 0) for item in group)
+
+        sorted_groups = sorted(groups.items(), key=lambda x: _group_max_cost(x[1]), reverse=True)
+
         rows = []
-        for f in sorted_f:
-            sev = f.get("severity", "info")
+        for title, group in sorted_groups:
+            n = len(group)
+            first = group[0]
+            sev = first.get("severity", "info")
             color = self._severity_color(sev)
             bg = self._severity_bg(sev)
-            rows.append(
-                f'<div class="finding" style="border-left:4px solid {color};background:{bg}">'
-                f'<span class="finding-sev" style="background:{color}">{sev.upper()}</span>'
-                f'<strong>{self._esc(f.get("title", ""))}</strong>'
-            )
-            detail = f.get("detail", "")
-            if detail:
-                rows.append(f'<p class="finding-detail">{self._esc(str(detail))}</p>')
-            rec = f.get("recommendation", "")
-            if rec:
+            total_waste = sum((item.get("est_wasted_cost", 0) or 0) for item in group)
+
+            if n == 1:
+                # Flat rendering for single findings (no <details> wrapper)
                 rows.append(
-                    f'<p class="finding-rec">建议: {self._esc(rec)}</p>'
+                    f'<div class="finding" data-severity="{sev}" '
+                    f'style="border-left:4px solid {color};background:{bg}">'
+                    f'<span class="finding-sev" style="background:{color}">{sev.upper()}</span>'
+                    f'<strong>{self._esc(title)}</strong>'
                 )
-            tool = f.get("tool", "")
-            if tool:
-                rows.append(f'<p class="finding-meta">工具: {self._esc(tool)}</p>')
-            waste = f.get("est_wasted_cost")
-            if waste is not None and waste > 0:
+                rows.append(self._render_finding_detail(first))
+                rows.append("</div>")
+            else:
+                # Aggregated card with <details> (native, zero JS)
+                waste_str = f"预估浪费合计 {total_waste:.4f} CNY" if total_waste > 0 else ""
                 rows.append(
-                    f'<p class="finding-meta">预估浪费: {waste:.6f} CNY</p>'
+                    f'<details class="finding-group" data-severity="{sev}">'
+                    f'<summary style="border-left:4px solid {color};background:{bg}">'
+                    f'<span class="finding-sev" style="background:{color}">{sev.upper()}</span>'
+                    f'<strong>{self._esc(title)}</strong>'
+                    f'<span class="finding-count">x{n} 条</span>'
+                    + (f'<span class="finding-waste-total">{waste_str}</span>' if waste_str else "")
+                    + f'</summary>'
+                    f'<div class="finding-detail-wrap">'
                 )
-            # Regulation references
-            regs = f.get("regulation_refs", [])
-            if regs:
-                rows.append('<div class="finding-regs">')
-                rows.append('<span class="finding-regs-label">法规依据:</span>')
-                rows.append('<ul class="regs-list">')
-                for ref in regs:
-                    regulation = ref.get("regulation", "unknown")
-                    article = ref.get("article", "")
-                    clause = ref.get("clause", "")
-                    note = ref.get("note", "")
-                    if note:
-                        rows.append(
-                            f"<li>{self._esc(regulation)} — {self._esc(note)}</li>"
-                        )
-                    else:
-                        rows.append(
-                            f"<li>{self._esc(regulation)} — {self._esc(article)}: {self._esc(clause)}</li>"
-                        )
-                rows.append("</ul></div>")
-            # Remediation suggestions
-            rems = f.get("remediation", [])
-            if rems:
-                rows.append('<div class="finding-rems">')
-                rows.append('<span class="finding-rems-label">修复建议:</span>')
-                rows.append('<ul class="rems-list">')
-                for rem in rems:
-                    priority = rem.get("priority", "medium")
-                    action = rem.get("action", "")
-                    detail = rem.get("detail", "")
-                    pri_color = self._severity_color(priority) if priority in ("high", "medium", "low") else "#6c757d"
+                rows.append(self._render_finding_detail(first))
+                if n > 1:
                     rows.append(
-                        f'<li>'
-                        f'<span class="rems-pri" style="background:{pri_color}">{priority.upper()}</span> '
-                        f'<strong>{self._esc(action)}</strong>'
+                        f'<p class="finding-extra-note">另有 {n - 1} 条同类发现（略）</p>'
                     )
-                    if detail:
-                        rows.append(f'<br><span class="rems-detail">{self._esc(detail)}</span>')
-                    rows.append('</li>')
-                rows.append("</ul></div>")
-            rows.append("</div>")
+                rows.append("</div></details>")
         return "\n".join(rows)
 
     # ── sections ─────────────────────────────────────────────────
@@ -555,7 +587,15 @@ class _HtmlBuilder:
         metrics = graph.get("metrics", {})
         return (
             f'<div class="section" id="layer-graph">'
-            f'<h2><span class="layer-badge">01</span> 协作图谱<a href="#dashboard" class="back-to-top">返回概览 ↑</a></h2>'
+            f'<h2><span class="layer-badge">01</span> 协作图谱'
+            f'<button class="layer-collapse-btn" data-layer="layer-graph" title="折叠/展开">↕</button>'
+            f'<a href="#dashboard" class="back-to-top">返回概览 ↑</a></h2>'
+            f'<div class="sev-filter" data-layer="layer-graph">'
+            f'<button class="active" data-sev="all">全部</button>'
+            f'<button data-sev="high">High</button>'
+            f'<button data-sev="medium">Medium</button>'
+            f'<button data-sev="low">Low</button>'
+            f'</div>'
             f'<div class="metrics-bar">'
             f'<span>节点: <strong>{len(graph.get("nodes", []))}</strong></span>'
             f'<span>边: <strong>{len(graph.get("edges", []))}</strong></span>'
@@ -578,7 +618,15 @@ class _HtmlBuilder:
             )
         return (
             f'<div class="section" id="layer-decision">'
-            f'<h2><span class="layer-badge">02</span> 决策审计<a href="#dashboard" class="back-to-top">返回概览 ↑</a></h2>'
+            f'<h2><span class="layer-badge">02</span> 决策审计'
+            f'<button class="layer-collapse-btn" data-layer="layer-decision" title="折叠/展开">↕</button>'
+            f'<a href="#dashboard" class="back-to-top">返回概览 ↑</a></h2>'
+            f'<div class="sev-filter" data-layer="layer-decision">'
+            f'<button class="active" data-sev="all">全部</button>'
+            f'<button data-sev="high">High</button>'
+            f'<button data-sev="medium">Medium</button>'
+            f'<button data-sev="low">Low</button>'
+            f'</div>'
             f'{bypass_banner}'
             f'<div class="metrics-bar">'
             f'<span>决策链步骤: <strong>{len(decision.get("decision_chain", []))}</strong></span>'
@@ -606,7 +654,15 @@ class _HtmlBuilder:
             )
         return (
             f'<div class="section" id="layer-evidence">'
-            f'<h2><span class="layer-badge">03</span> 证据链<a href="#dashboard" class="back-to-top">返回概览 ↑</a></h2>'
+            f'<h2><span class="layer-badge">03</span> 证据链'
+            f'<button class="layer-collapse-btn" data-layer="layer-evidence" title="折叠/展开">↕</button>'
+            f'<a href="#dashboard" class="back-to-top">返回概览 ↑</a></h2>'
+            f'<div class="sev-filter" data-layer="layer-evidence">'
+            f'<button class="active" data-sev="all">全部</button>'
+            f'<button data-sev="high">High</button>'
+            f'<button data-sev="medium">Medium</button>'
+            f'<button data-sev="low">Low</button>'
+            f'</div>'
             f'<div class="metrics-bar">'
             f'<span>声明检查: <strong>{evidence.get("claims_checked", 0)}</strong></span>'
             f'<span>已验证: <strong>{evidence.get("verified", 0)}</strong></span>'
@@ -637,7 +693,15 @@ class _HtmlBuilder:
 
         return (
             f'<div class="section" id="layer-cost">'
-            f'<h2><span class="layer-badge">04</span> 成本治理<a href="#dashboard" class="back-to-top">返回概览 ↑</a></h2>'
+            f'<h2><span class="layer-badge">04</span> 成本治理'
+            f'<button class="layer-collapse-btn" data-layer="layer-cost" title="折叠/展开">↕</button>'
+            f'<a href="#dashboard" class="back-to-top">返回概览 ↑</a></h2>'
+            f'<div class="sev-filter" data-layer="layer-cost">'
+            f'<button class="active" data-sev="all">全部</button>'
+            f'<button data-sev="high">High</button>'
+            f'<button data-sev="medium">Medium</button>'
+            f'<button data-sev="low">Low</button>'
+            f'</div>'
             f'<div class="metrics-bar">'
             f'<span>总输入 Token: <strong>{cost.get("total_tokens_in", 0):,}</strong></span>'
             f'<span>总输出 Token: <strong>{cost.get("total_tokens_out", 0):,}</strong></span>'
@@ -667,7 +731,15 @@ class _HtmlBuilder:
             )
         return (
             f'<div class="section" id="layer-shadow">'
-            f'<h2><span class="layer-badge">05</span> 影子智能体检测<a href="#dashboard" class="back-to-top">返回概览 ↑</a></h2>'
+            f'<h2><span class="layer-badge">05</span> 影子智能体检测'
+            f'<button class="layer-collapse-btn" data-layer="layer-shadow" title="折叠/展开">↕</button>'
+            f'<a href="#dashboard" class="back-to-top">返回概览 ↑</a></h2>'
+            f'<div class="sev-filter" data-layer="layer-shadow">'
+            f'<button class="active" data-sev="all">全部</button>'
+            f'<button data-sev="high">High</button>'
+            f'<button data-sev="medium">Medium</button>'
+            f'<button data-sev="low">Low</button>'
+            f'</div>'
             f'{shadow_banner}'
             f'<div class="metrics-bar">'
             f'<span>摘要: <strong>{self._esc(shadow.get("summary", "no findings"))}</strong></span>'
@@ -690,7 +762,15 @@ class _HtmlBuilder:
             )
         return (
             f'<div class="section" id="layer-compliance">'
-            f'<h2><span class="layer-badge">06</span> 决策权限合规<a href="#dashboard" class="back-to-top">返回概览 ↑</a></h2>'
+            f'<h2><span class="layer-badge">06</span> 决策权限合规'
+            f'<button class="layer-collapse-btn" data-layer="layer-compliance" title="折叠/展开">↕</button>'
+            f'<a href="#dashboard" class="back-to-top">返回概览 ↑</a></h2>'
+            f'<div class="sev-filter" data-layer="layer-compliance">'
+            f'<button class="active" data-sev="all">全部</button>'
+            f'<button data-sev="high">High</button>'
+            f'<button data-sev="medium">Medium</button>'
+            f'<button data-sev="low">Low</button>'
+            f'</div>'
             f'{compliance_banner}'
             f'<div class="metrics-bar">'
             f'<span>摘要: <strong>{self._esc(compliance.get("summary", "no findings"))}</strong></span>'
@@ -911,6 +991,31 @@ tr:hover{background:#f8f9fa}
   font-weight:700;margin-left:8px;vertical-align:middle}
 .dash-badge.ok{background:#d1e7dd;color:#0f5132}
 .dash-badge.warn{background:#f8d7da;color:#842029}
+/* ── finding aggregation (P0-1) ── */
+.finding-group{margin-bottom:8px;border-radius:6px;overflow:hidden}
+.finding-group summary{cursor:pointer;padding:12px 16px;list-style:none;display:flex;
+  align-items:center;flex-wrap:wrap;gap:8px}
+.finding-group summary::-webkit-details-marker{display:none}
+.finding-group summary::marker{display:none;content:""}
+.finding-group summary::before{content:"▶";display:inline-block;margin-right:6px;
+  font-size:10px;transition:transform 0.2s;color:#888}
+.finding-group[open] summary::before{transform:rotate(90deg)}
+.finding-group .finding-detail-wrap{padding:0 16px 12px 16px}
+.finding-count{display:inline-block;font-size:11px;font-weight:700;color:#fff;
+  background:#6c757d;padding:1px 8px;border-radius:10px;margin-left:4px}
+.finding-waste-total{font-size:11px;color:#dc3545;font-weight:600;margin-left:8px}
+.finding-extra-note{font-size:11px;color:#888;font-style:italic;margin-top:6px}
+/* ── severity filter + layer collapse (P0-2) ── */
+.sev-filter{display:inline-flex;gap:4px;margin-left:12px;vertical-align:middle}
+.sev-filter button{padding:2px 10px;border-radius:10px;font-size:11px;font-weight:600;
+  border:1px solid #ddd;background:#fff;color:#666;cursor:pointer;transition:all 0.15s}
+.sev-filter button:hover{background:#e8f0fe;border-color:#0d6efd}
+.sev-filter button.active{background:#0d6efd;color:#fff;border-color:#0d6efd}
+.layer-collapse-btn{float:right;padding:2px 8px;border-radius:4px;font-size:12px;
+  border:1px solid #ddd;background:#fff;color:#666;cursor:pointer;transition:all 0.15s;
+  margin-left:8px}
+.layer-collapse-btn:hover{background:#e8f0fe;border-color:#0d6efd}
+.layer-collapse-btn.collapsed{background:#f0f0f0;color:#999}
 """
 
     # ── build ────────────────────────────────────────────────────
@@ -932,6 +1037,7 @@ tr:hover{background:#f8f9fa}
         scrollspy_js = (
             '<script>'
             '(function(){'
+            # ── scrollspy nav ──
             'var navLinks=document.querySelectorAll(".layer-nav a");'
             'var sections=[];'
             'navLinks.forEach(function(a){'
@@ -976,6 +1082,57 @@ tr:hover{background:#f8f9fa}
             '    }'
             '  });'
             '}'
+            # ── severity filter ──
+            'var sevFilters=document.querySelectorAll(".sev-filter");'
+            'sevFilters.forEach(function(filter){'
+            '  var layerId=filter.getAttribute("data-layer");'
+            '  var section=document.getElementById(layerId);'
+            '  if(!section)return;'
+            '  var btns=filter.querySelectorAll("button");'
+            '  btns.forEach(function(btn){'
+            '    btn.addEventListener("click",function(){'
+            '      btns.forEach(function(b){b.classList.remove("active")});'
+            '      this.classList.add("active");'
+            '      var sev=this.getAttribute("data-sev");'
+            '      var cards=section.querySelectorAll(".finding,.finding-group");'
+            '      cards.forEach(function(card){'
+            '        if(sev==="all"||card.getAttribute("data-severity")===sev){'
+            '          card.style.display="";'
+            '        }else{'
+            '          card.style.display="none";'
+            '        }'
+            '      });'
+            '    });'
+            '  });'
+            '});'
+            # ── layer collapse ──
+            'var collapseBtns=document.querySelectorAll(".layer-collapse-btn");'
+            'collapseBtns.forEach(function(btn){'
+            '  btn.addEventListener("click",function(){'
+            '    var layerId=this.getAttribute("data-layer");'
+            '    var section=document.getElementById(layerId);'
+            '    if(!section)return;'
+            '    var collapsed=this.classList.toggle("collapsed");'
+            '    var h3s=section.querySelectorAll(":scope > h3");'
+            '    var tables=section.querySelectorAll(":scope > table");'
+            '    var metrics=section.querySelectorAll(":scope > .metrics-bar");'
+            '    var graphs=section.querySelectorAll(":scope > .graph-svg-wrap, :scope > .graph-legend");'
+            '    var banners=section.querySelectorAll(":scope > .bypass-banner");'
+            '    var findings=section.querySelectorAll(":scope > .finding, :scope > .finding-group");'
+            '    var allEls=[].concat('
+            '      Array.prototype.slice.call(h3s),'
+            '      Array.prototype.slice.call(tables),'
+            '      Array.prototype.slice.call(metrics),'
+            '      Array.prototype.slice.call(graphs),'
+            '      Array.prototype.slice.call(banners),'
+            '      Array.prototype.slice.call(findings)'
+            '    );'
+            '    allEls.forEach(function(el){'
+            '      el.style.display=collapsed?"none":"";'
+            '    });'
+            '    this.textContent=collapsed?"▶":"↕";'
+            '  });'
+            '});'
             '})();'
             '</script>'
         )
