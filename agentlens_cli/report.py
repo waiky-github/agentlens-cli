@@ -85,6 +85,203 @@ class _HtmlBuilder:
             f"<td class='num'>{data.get('cost', 0):.6f}</td></tr>"
         )
 
+    # ── dashboard (一页速览) ─────────────────────────────────────
+
+    def _js(self, obj) -> str:
+        """Serialize obj to a JS-safe JSON literal (escapes </script>)."""
+        return json.dumps(obj, ensure_ascii=False).replace("</", "<\\/")
+
+    def _all_findings(self) -> list:
+        layer_keys = ["graph", "decision", "evidence", "cost", "shadow", "compliance"]
+        out = []
+        for key in layer_keys:
+            layer = self._r.get(key, {})
+            if isinstance(layer, dict):
+                out.extend(layer.get("findings", []))
+        return out
+
+    def _severity_dist(self, findings: list) -> dict:
+        dist = {"high": 0, "medium": 0, "low": 0, "info": 0}
+        for f in findings:
+            s = f.get("severity", "info")
+            dist[s] = dist.get(s, 0) + 1
+        return dist
+
+    def _dashboard(self) -> str:
+        findings = self._all_findings()
+        dist = self._severity_dist(findings)
+        total_findings = len(findings)
+        high = dist["high"]
+
+        cost = self._r.get("cost", {})
+        decision = self._r.get("decision", {})
+        shadow = self._r.get("shadow", {})
+        graph = self._r.get("graph", {})
+
+        est_waste = cost.get("total_est_wasted_cost", 0)
+        avoidable = cost.get("avoidable_cost_ratio", 0)
+        bypass = bool(decision.get("approval_bypass_detected", False))
+        shadow_count = len(shadow.get("findings", []))
+        total_cost = cost.get("total_cost", 0)
+        closure_rate = graph.get("metrics", {}).get("closure_rate", 0)
+
+        kpi_cards = (
+            f'<div class="kpi-card {"red" if high > 0 else "green"}">'
+            f'<div class="kpi-label">发现总数</div>'
+            f'<div class="kpi-value">{total_findings}</div>'
+            f'<div class="kpi-sub">High {high} / Med {dist["medium"]} / Low {dist["low"]} / Info {dist["info"]}</div></div>'
+            f'<div class="kpi-card {"red" if est_waste > 0 else "green"}">'
+            f'<div class="kpi-label">预估浪费成本</div>'
+            f'<div class="kpi-value">{est_waste:.4f}</div>'
+            f'<div class="kpi-sub">CNY（总成本 {total_cost:.4f}）</div></div>'
+            f'<div class="kpi-card {"purple" if shadow_count > 0 else "green"}">'
+            f'<div class="kpi-label">影子智能体</div>'
+            f'<div class="kpi-value">{shadow_count}</div>'
+            f'<div class="kpi-sub">{"需关注" if shadow_count else "未发现"}</div></div>'
+            f'<div class="kpi-card {"red" if bypass else "green"}">'
+            f'<div class="kpi-label">审批绕过</div>'
+            f'<div class="kpi-value">{"检出" if bypass else "无"}</div>'
+            f'<div class="kpi-sub">决策审计</div></div>'
+            f'<div class="kpi-card orange">'
+            f'<div class="kpi-label">可避免成本占比</div>'
+            f'<div class="kpi-value">{self._pct(avoidable)}</div>'
+            f'<div class="kpi-sub">占总支出的浪费比例</div></div>'
+            f'<div class="kpi-card gray">'
+            f'<div class="kpi-label">任务闭环率</div>'
+            f'<div class="kpi-value">{self._pct(closure_rate)}</div>'
+            f'<div class="kpi-sub">协作图谱</div></div>'
+        )
+
+        # ── Chart 1: severity donut ──
+        pie_data = [
+            {"name": "High", "value": dist["high"], "itemStyle": {"color": "#dc3545"}},
+            {"name": "Medium", "value": dist["medium"], "itemStyle": {"color": "#fd7e14"}},
+            {"name": "Low", "value": dist["low"], "itemStyle": {"color": "#ffc107"}},
+            {"name": "Info", "value": dist["info"], "itemStyle": {"color": "#0d6efd"}},
+        ]
+
+        # ── Chart 2: top-10 waste bars ──
+        cost_findings = sorted(
+            cost.get("findings", []),
+            key=lambda f: f.get("est_wasted_cost", 0),
+            reverse=True,
+        )[:10]
+        waste_names = [
+            (f.get("title", ""))[:30] + ("…" if len(f.get("title", "")) > 30 else "")
+            for f in cost_findings
+        ]
+        waste_vals = [round(f.get("est_wasted_cost", 0), 4) for f in cost_findings]
+
+        # ── Chart 3: cost by agent ──
+        cost_by_agent = cost.get("cost_by_agent", {})
+        agents = sorted(cost_by_agent.keys())
+        agent_cost = [round(cost_by_agent[a].get("cost", 0), 4) for a in agents]
+        agent_tokens = [
+            (cost_by_agent[a].get("tokens_in", 0) + cost_by_agent[a].get("tokens_out", 0))
+            for a in agents
+        ]
+
+        # ── assemble ──
+        bypass_badge = (
+            '<span class="dash-badge warn">检测到审批绕过</span>'
+            if bypass
+            else '<span class="dash-badge ok">审批链正常</span>'
+        )
+        shadow_badge = (
+            '<span class="dash-badge warn">发现影子智能体</span>'
+            if shadow_count
+            else '<span class="dash-badge ok">无影子智能体</span>'
+        )
+
+        js_data = {
+            "severity": pie_data,
+            "waste_names": waste_names,
+            "waste_vals": waste_vals,
+            "agents": agents,
+            "agent_cost": agent_cost,
+            "agent_tokens": agent_tokens,
+        }
+
+        return (
+            f'<div class="section" id="dashboard">'
+            f'<h2>📊 一页速览{bypass_badge}{shadow_badge}</h2>'
+            f'<div class="kpi-grid">{kpi_cards}</div>'
+            f'<div class="chart-grid">'
+            f'<div class="chart-box"><h4>发现严重度分布</h4>'
+            f'<div id="chart-severity" class="chart-canvas"></div></div>'
+            f'<div class="chart-box"><h4>Top 10 浪费发现（预估 CNY）</h4>'
+            f'<div id="chart-waste" class="chart-canvas"></div></div>'
+            f'<div class="chart-box wide"><h4>各 Agent 成本与 Token 量</h4>'
+            f'<div id="chart-agent" class="chart-canvas"></div></div>'
+            f'</div>'
+            f'</div>'
+            f'<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>'
+            f'<script>'
+            f'(function(){{'
+            f"var DATA = {self._js(js_data)};"
+            f"if (typeof echarts === 'undefined') {{"
+            f"  var boxes = document.querySelectorAll('.chart-canvas');"
+            f"  for (var i = 0; i < boxes.length; i++) {{"
+            f"    boxes[i].innerHTML = '<div class=\"nodata\">图表需要联网加载 ECharts，当前环境无法访问 CDN</div>';"
+            f"  }}"
+            f"  return;"
+            f"}}"
+            f"var chartSeverity = echarts.init(document.getElementById('chart-severity'));"
+            f"chartSeverity.setOption({{\n"
+            f"  animation: false,"
+            f"  tooltip: {{trigger: 'item', formatter: '{{b}}: {{c}} ({{d}}%)'}},"
+            f"  legend: {{bottom: 0}},"
+            f"  series: [{{"
+            f"    name: '严重度', type: 'pie', radius: ['45%', '70%'],"
+            f"    center: ['50%', '45%'],"
+            f"    avoidLabelOverlap: true,"
+            f"    itemStyle: {{borderRadius: 6, borderColor: '#fff', borderWidth: 2}},"
+            f"    label: {{show: true, formatter: '{{b}} {{c}}'}},"
+            f"    data: DATA.severity"
+            f"  }}]"
+            f"}});"
+            f"requestAnimationFrame(function() {{ chartSeverity.resize(); }});"
+            f"var chartWaste = echarts.init(document.getElementById('chart-waste'));"
+            f"chartWaste.setOption({{\n"
+            f"  animation: false,"
+            f"  tooltip: {{trigger: 'axis', axisPointer: {{type: 'shadow'}}, valueFormatter: function(v) {{ return v + ' CNY'; }}}},"
+            f"  grid: {{left: 8, right: 30, top: 10, bottom: 8, containLabel: true}},"
+            f"  xAxis: {{type: 'value', name: 'CNY'}},"
+            f"  yAxis: {{type: 'category', data: DATA.waste_names, inverse: true}},"
+            f"  series: [{{"
+            f"    name: '预估浪费', type: 'bar', data: DATA.waste_vals,"
+            f"    itemStyle: {{color: '#fd7e14', borderRadius: [0, 4, 4, 0]}},"
+            f"    label: {{show: true, position: 'right', formatter: function(p) {{ return p.value.toFixed(4); }}}}"
+            f"  }}]"
+            f"}});"
+            f"var chartAgent = echarts.init(document.getElementById('chart-agent'));"
+            f"chartAgent.setOption({{\n"
+            f"  animation: false,"
+            f"  tooltip: {{trigger: 'axis'}},"
+            f"  legend: {{top: 0}},"
+            f"  grid: {{left: 8, right: 30, top: 30, bottom: 8, containLabel: true}},"
+            f"  xAxis: {{type: 'category', data: DATA.agents, axisLabel: {{interval: 0, rotate: 20}}}},"
+            f"  yAxis: ["
+            f"    {{type: 'value', name: '成本 CNY', axisLabel: {{formatter: function(v) {{ return v.toFixed(4); }}}}}},"
+            f"    {{type: 'value', name: 'Token', splitLine: {{show: false}}}}"
+            f"  ],"
+            f"  series: ["
+            f"    {{name: '成本 (CNY)', type: 'bar', data: DATA.agent_cost, itemStyle: {{color: '#0d6efd', borderRadius: [4, 4, 0, 0]}}}},"
+            f"    {{name: 'Token 量', type: 'line', yAxisIndex: 1, data: DATA.agent_tokens,"
+            f"      itemStyle: {{color: '#6f42c1'}}, smooth: true}}"
+            f"  ]"
+            f"}});"
+            f"function resizeAll() {{"
+            f"  chartSeverity.resize(); chartWaste.resize(); chartAgent.resize();"
+            f"}}"
+            f"requestAnimationFrame(resizeAll);"
+            f"setTimeout(resizeAll, 100);"
+            f"window.addEventListener('resize', resizeAll);"
+            f"window.addEventListener('load', resizeAll);"
+            f"}})();"
+            f"</script>"
+        )
+
     # ── SVG graph ────────────────────────────────────────────────
 
     def _render_graph_viz(self, graph: dict) -> str:
@@ -672,6 +869,27 @@ tr:hover{background:#f8f9fa}
 .rems-detail{color:#555;font-size:10px}
 .prio-list{margin:4px 0 12px 20px;padding:0;font-size:13px}
 .prio-list li{margin:2px 0;line-height:1.4}
+.kpi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:20px}
+.kpi-card{background:#fff;border-radius:10px;padding:16px 12px;text-align:center;
+  box-shadow:0 1px 4px rgba(0,0,0,0.06);border-top:3px solid #0d6efd}
+.kpi-card.red{border-top-color:#dc3545}
+.kpi-card.orange{border-top-color:#fd7e14}
+.kpi-card.green{border-top-color:#198754}
+.kpi-card.purple{border-top-color:#6f42c1}
+.kpi-card.gray{border-top-color:#6c757d}
+.kpi-label{font-size:12px;color:#888;margin-bottom:4px}
+.kpi-value{font-size:26px;font-weight:800;font-variant-numeric:tabular-nums;line-height:1.2}
+.kpi-sub{font-size:11px;color:#aaa;margin-top:2px}
+.chart-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.chart-box{background:#f8f9fa;border-radius:8px;padding:12px}
+.chart-box h4{font-size:13px;color:#555;margin:0 0 8px;font-weight:600}
+.chart-box.wide{grid-column:1/-1}
+.chart-canvas{width:100%;height:300px}
+@media(max-width:768px){.chart-grid{grid-template-columns:1fr}}
+.dash-badge{display:inline-block;padding:2px 10px;border-radius:12px;font-size:11px;
+  font-weight:700;margin-left:8px;vertical-align:middle}
+.dash-badge.ok{background:#d1e7dd;color:#0f5132}
+.dash-badge.warn{background:#f8d7da;color:#842029}
 """
 
     # ── build ────────────────────────────────────────────────────
@@ -685,6 +903,7 @@ tr:hover{background:#f8f9fa}
             f"<style>{self._CSS}</style>\n"
             "</head>\n<body>\n<div class=\"container\">\n"
             + self._section_header(self._r)
+            + self._dashboard()
             + self._section_graph(self._r.get("graph", {}))
             + self._section_decision(self._r.get("decision", {}))
             + self._section_evidence(self._r.get("evidence", {}))
