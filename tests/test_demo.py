@@ -96,10 +96,10 @@ class TestDemo:
             )
             assert "http://" not in html_no_cdn, "demo HTML contains http:// reference"
             assert "https://" not in html_no_cdn, "demo HTML contains https:// reference"
-            # Exactly two <script> tags: ECharts CDN loader + dashboard init.
+            # Exactly three <script> tags: ECharts CDN loader + dashboard init + scrollspy nav.
             script_count = len(re.findall(r"<script", html_no_cdn.lower()))
-            assert script_count == 2, (
-                f"expected 2 <script> (ECharts CDN + dashboard init), got {script_count}"
+            assert script_count == 3, (
+                f"expected 3 <script> (ECharts CDN + dashboard init + scrollspy), got {script_count}"
             )
         finally:
             os.unlink(tmp)
