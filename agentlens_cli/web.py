@@ -3,9 +3,11 @@
 提供审计报告浏览、审计触发、watchdog 漂移状态查看等功能。
 """
 
+import base64
 import json
 import os
 import re
+import secrets
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -49,7 +51,44 @@ class NoCacheMiddleware(BaseHTTPMiddleware):
         return response
 
 
+class BasicAuthMiddleware(BaseHTTPMiddleware):
+    """HTTP Basic Auth 访问控制。
+
+    若设置了 AGENTLENS_WEB_PASSWORD 环境变量则强制校验（用户名默认 admin，
+    可用 AGENTLENS_WEB_USERNAME 覆盖）；未设置则放行（本地/开发模式）。
+    """
+
+    def __init__(self, app):
+        super().__init__(app)
+        self._username = os.environ.get("AGENTLENS_WEB_USERNAME", "admin")
+        self._password = os.environ.get("AGENTLENS_WEB_PASSWORD", "")
+        self._enabled = bool(self._password)
+
+    async def dispatch(self, request: Request, call_next):
+        if not self._enabled:
+            return await call_next(request)
+        auth = request.headers.get("Authorization", "")
+        ok = False
+        if auth.startswith("Basic "):
+            try:
+                decoded = base64.b64decode(auth[6:]).decode("utf-8")
+                user, _, pwd = decoded.partition(":")
+                ok = secrets.compare_digest(user, self._username) and secrets.compare_digest(
+                    pwd, self._password
+                )
+            except Exception:
+                ok = False
+        if not ok:
+            return JSONResponse(
+                {"detail": "Authentication required"},
+                status_code=401,
+                headers={"WWW-Authenticate": 'Basic realm="AgentLens Audit"'},
+            )
+        return await call_next(request)
+
+
 app.add_middleware(NoCacheMiddleware)
+app.add_middleware(BasicAuthMiddleware)
 
 
 # ─────────────────────────────────────────────────────────────────
