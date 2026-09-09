@@ -96,11 +96,21 @@ class TestDemo:
             )
             assert "http://" not in html_no_cdn, "demo HTML contains http:// reference"
             assert "https://" not in html_no_cdn, "demo HTML contains https:// reference"
-            # Exactly three <script> tags: ECharts CDN loader + dashboard init + scrollspy nav.
+            # Exactly four <script> tags: ECharts CDN loader + dashboard init +
+            # scrollspy nav + embedded findings-data JSON (programmatic consumers).
             script_count = len(re.findall(r"<script", html_no_cdn.lower()))
-            assert script_count == 3, (
-                f"expected 3 <script> (ECharts CDN + dashboard init + scrollspy), got {script_count}"
+            assert script_count == 4, (
+                f"expected 4 <script> (ECharts CDN + dashboard init + scrollspy + findings-data), got {script_count}"
             )
+            # Embedded findings JSON should be present and parseable.
+            import json as _json
+            m = re.search(
+                r'<script id="findings-data" type="application/json">(.*?)</script>',
+                html_no_cdn, re.DOTALL,
+            )
+            assert m, "findings-data JSON block missing"
+            data = _json.loads(m.group(1))
+            assert isinstance(data, list) and len(data) > 0, "findings-data should be a non-empty list"
         finally:
             os.unlink(tmp)
 
