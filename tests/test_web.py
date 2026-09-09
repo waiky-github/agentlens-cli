@@ -359,3 +359,117 @@ class TestCsvExport:
         # with at least one row having count > 1.
         counts = [int(r[5]) for r in rows[1:] if r[5].isdigit()]
         assert any(c > 1 for c in counts), "expected at least one aggregated finding with count > 1"
+
+
+class TestP2MultiProject:
+    """Tests for P2-2: multi-project / multi-environment support."""
+
+    def test_projects_api_returns_200(self):
+        resp = client.get("/api/projects")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert isinstance(data, list)
+        # Should include "default" if reports exist
+        assert any(p["name"] == "default" for p in data)
+
+    def test_reports_with_project_default_returns_200(self):
+        resp = client.get("/api/reports?project=default")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert isinstance(data, list)
+
+    def test_reports_with_nonexistent_project_returns_empty(self):
+        resp = client.get("/api/reports?project=nonexistent_xyz")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert isinstance(data, list)
+        assert len(data) == 0
+
+    def test_trends_with_project_returns_200(self):
+        resp = client.get("/api/reports/trends?project=default")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert isinstance(data, dict)
+        assert "dates" in data
+
+    def test_report_detail_page_supports_project(self):
+        resp = client.get("/reports?project=default")
+        assert resp.status_code == 200
+        assert "text/html" in resp.headers["content-type"]
+        assert "报告列表" in resp.text
+
+
+class TestP2FixTracking:
+    """Tests for P2-1: fix tracking lifecycle."""
+
+    def test_findings_status_returns_200(self):
+        resp = client.get("/api/findings/status")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "findings" in data
+        assert "fixed_tracking" in data
+        assert isinstance(data["findings"], list)
+        assert isinstance(data["fixed_tracking"], list)
+
+    def test_findings_status_has_correct_fields(self):
+        resp = client.get("/api/findings/status")
+        data = resp.json()
+        if data["findings"]:
+            f = data["findings"][0]
+            for field in ["key", "layer", "severity", "title", "status"]:
+                assert field in f, f"missing field: {field}"
+            assert f["status"] in ("open", "marked_fixed", "reopened", "closed")
+
+    def test_findings_key_status(self):
+        resp = client.get("/api/findings/test-layer%7Ctest-title/status")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "open"
+
+    def test_mark_fixed_returns_ok(self):
+        resp = client.post(
+            "/api/findings/%E6%88%90%E6%9C%AC%E6%B2%BB%E7%90%86%7Ctest-mark/mark-fixed",
+            json={"note": "test-mark"},
+        )
+        # This should return ok even if the finding doesn't exist
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "ok"
+
+    def test_fix_track_page_returns_200(self):
+        resp = client.get("/fix-track")
+        assert resp.status_code == 200
+        assert "text/html" in resp.headers["content-type"]
+        assert "修复跟踪" in resp.text
+
+
+class TestP2Notify:
+    """Tests for P2-3: notification channel configuration."""
+
+    def test_notify_config_get_returns_200(self):
+        resp = client.get("/api/notify/config")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "enabled" in data
+        assert "channels" in data
+
+    def test_notify_set_config_returns_400_without_body(self):
+        resp = client.post("/api/notify/config", json={})
+        assert resp.status_code == 400
+
+    def test_notify_set_config_bad_channels_returns_400(self):
+        resp = client.post("/api/notify/config", json={"enabled": True, "channels": "not-a-list"})
+        assert resp.status_code == 400
+
+    def test_notify_test_sends_ok(self):
+        resp = client.post("/api/notify/test", json={"subject": "test"})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "ok"
+        assert "results" in data
+
+    def test_notify_page_returns_200(self):
+        resp = client.get("/notify")
+        assert resp.status_code == 200
+        assert "text/html" in resp.headers["content-type"]
+        assert "通知配置" in resp.text

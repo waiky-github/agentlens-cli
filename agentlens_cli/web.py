@@ -12,6 +12,7 @@ import re
 import secrets
 import subprocess
 import sys
+import urllib.parse
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -24,6 +25,12 @@ except ImportError:
     raise ImportError(
         "Web dependencies not installed. Run: pip install agentlens-audit[web]"
     )
+
+from agentlens_cli.notify import (
+    get_notify_config,
+    save_notify_config,
+    send_notify,
+)
 
 # ─────────────────────────────────────────────────────────────────
 # Config
@@ -74,6 +81,182 @@ def _save_tasks():
 
 # Load persisted tasks on module import
 _AUDIT_TASKS = _load_tasks()
+
+
+# ─────────────────────────────────────────────────────────────────
+# P2-1: Fixed-findings tracking
+# ─────────────────────────────────────────────────────────────────
+
+_FIXED_FILE = REPORT_DIR / "fixed-findings.json"
+
+
+def _load_fixed_findings() -> list[dict]:
+    """Load persisted fixed-findings tracking data."""
+    if not _FIXED_FILE.is_file():
+        return []
+    try:
+        data = json.loads(_FIXED_FILE.read_text(encoding="utf-8"))
+        if isinstance(data, list):
+            return data
+    except (json.JSONDecodeError, OSError):
+        pass
+    return []
+
+
+def _save_fixed_findings(data: list[dict]):
+    """Persist fixed-findings tracking data atomically."""
+    try:
+        REPORT_DIR.mkdir(parents=True, exist_ok=True)
+        tmp_path = _FIXED_FILE.with_suffix(".tmp")
+        tmp_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(tmp_path, _FIXED_FILE)
+    except OSError:
+        pass
+
+
+def _finding_key(layer: str, title: str) -> str:
+    """Build a URL-safe key from (layer, title)."""
+    raw = f"{layer}|{title}"
+    return urllib.parse.quote(raw, safe="")
+
+
+def _decode_finding_key(key: str) -> tuple[str, str]:
+    """Decode a URL-safe key back to (layer, title)."""
+    raw = urllib.parse.unquote(key)
+    parts = raw.split("|", 1)
+    if len(parts) == 2:
+        return parts[0], parts[1]
+    return raw, ""
+
+
+# ─────────────────────────────────────────────────────────────────
+# P2-2: Multi-project / multi-environment support
+# ─────────────────────────────────────────────────────────────────
+
+def _get_project_dir(project: str) -> Path:
+    """Get the subdirectory for a given project within REPORT_DIR."""
+    project = (project or "default").strip()
+    if project == "default":
+        return REPORT_DIR
+    return REPORT_DIR / project
+
+
+def _get_report_path(date_str: str, project: str = "default") -> Optional[Path]:
+    """Get the report file path for a given date and project.
+
+    Checks project subdirectory first, then falls back to root dir
+    for backward compatibility.
+    """
+    proj_dir = _get_project_dir(project)
+    if project != "default":
+        f = proj_dir / f"audit-{date_str}.html"
+        if f.is_file():
+            return f
+    # Fallback: root dir
+    f = REPORT_DIR / f"audit-{date_str}.html"
+    if f.is_file():
+        return f
+    # Also check project dir for default
+    if project == "default":
+        f = proj_dir / f"audit-{date_str}.html"
+        if f.is_file():
+            return f
+    return None
+
+
+def _list_report_files(project: str = "default") -> list[dict]:
+    """List all audit-*.html files for a given project.
+
+    For default project: also scans the root dir (backward compat).
+    For non-default projects: only scans the project subdirectory.
+    """
+    reports = []
+    if not REPORT_DIR.is_dir():
+        return reports
+
+    proj_dir = _get_project_dir(project)
+    seen_dates: set[str] = set()
+
+    # Scan project subdirectory
+    if proj_dir.is_dir():
+        for f in sorted(proj_dir.glob("audit-*.html"), reverse=True):
+            m = re.match(r"audit-(\d{8})\.html", f.name)
+            if not m:
+                continue
+            date_str = m.group(1)
+            if date_str in seen_dates:
+                continue
+            seen_dates.add(date_str)
+            entry = _build_report_entry(f, date_str, project)
+            if entry:
+                reports.append(entry)
+
+    # For default project, also scan root dir (backward compat)
+    if project == "default" and proj_dir != REPORT_DIR:
+        for f in sorted(REPORT_DIR.glob("audit-*.html"), reverse=True):
+            m = re.match(r"audit-(\d{8})\.html", f.name)
+            if not m:
+                continue
+            date_str = m.group(1)
+            if date_str in seen_dates:
+                continue
+            seen_dates.add(date_str)
+            entry = _build_report_entry(f, date_str, project)
+            if entry:
+                reports.append(entry)
+
+    return reports
+
+
+def _build_report_entry(f: Path, date_str: str, project: str) -> dict | None:
+    """Build a report metadata dict for a single file."""
+    stat = f.stat()
+    size = stat.st_size
+    mtime = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat()
+
+    try:
+        html = f.read_text(encoding="utf-8")
+    except Exception:
+        html = ""
+    meta = _parse_html_report(html)
+
+    return {
+        "date": date_str,
+        "filename": f.name,
+        "size_bytes": size,
+        "mtime": mtime,
+        "events": meta["events"],
+        "high": meta["high"],
+        "medium": meta["medium"],
+        "low": meta["low"],
+        "info": meta["info"],
+        "findings_total": meta["findings_total"],
+        "total_cost": meta["total_cost"],
+        "est_waste": meta["est_waste"],
+        "total_tokens_in": meta["total_tokens_in"],
+        "project": project,
+    }
+
+
+def _list_projects() -> list[str]:
+    """List all project names (subdirectories with audit-*.html files)."""
+    projects: set[str] = set()
+    if not REPORT_DIR.is_dir():
+        return []
+
+    # Root dir has reports → "default"
+    root_reports = list(REPORT_DIR.glob("audit-*.html"))
+    if root_reports:
+        projects.add("default")
+
+    # Subdirectories with reports
+    for subdir in sorted(REPORT_DIR.iterdir()):
+        if subdir.is_dir() and not subdir.name.startswith("."):
+            sub_reports = list(subdir.glob("audit-*.html"))
+            if sub_reports:
+                projects.add(subdir.name)
+
+    return sorted(projects)
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -367,54 +550,6 @@ def strip_tags(text: str) -> str:
     return re.sub(r"<[^>]+>", "", text).strip()
 
 
-def _list_report_files() -> list[dict]:
-    """List all audit-*.html files in the report directory with metadata."""
-    reports = []
-    if not REPORT_DIR.is_dir():
-        return reports
-
-    for f in sorted(REPORT_DIR.glob("audit-*.html"), reverse=True):
-        m = re.match(r"audit-(\d{8})\.html", f.name)
-        if not m:
-            continue
-        date_str = m.group(1)
-        stat = f.stat()
-        size = stat.st_size
-        mtime = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat()
-
-        try:
-            html = f.read_text(encoding="utf-8")
-        except Exception:
-            html = ""
-        meta = _parse_html_report(html)
-
-        reports.append({
-            "date": date_str,
-            "filename": f.name,
-            "size_bytes": size,
-            "mtime": mtime,
-            "events": meta["events"],
-            "high": meta["high"],
-            "medium": meta["medium"],
-            "low": meta["low"],
-            "info": meta["info"],
-            "findings_total": meta["findings_total"],
-            "total_cost": meta["total_cost"],
-            "est_waste": meta["est_waste"],
-            "total_tokens_in": meta["total_tokens_in"],
-        })
-
-    return reports
-
-
-def _get_report_path(date_str: str) -> Optional[Path]:
-    """Get the report file path for a given date string (YYYYMMDD)."""
-    f = REPORT_DIR / f"audit-{date_str}.html"
-    if f.is_file():
-        return f
-    return None
-
-
 # ─────────────────────────────────────────────────────────────────
 # CSS: Dark theme (Langfuse-style)
 # ─────────────────────────────────────────────────────────────────
@@ -616,6 +751,8 @@ def _sidebar_html(active_nav: str = "") -> str:
         ("/", "📊", "仪表盘"),
         ("/reports", "📄", "报告列表"),
         ("/audit", "🔍", "触发审计"),
+        ("/fix-track", "🔧", "修复跟踪"),
+        ("/notify", "🔔", "通知配置"),
         ("/#watchdog", "🛡", "Watchdog"),
     ]
     nav_links = []
@@ -634,7 +771,7 @@ def _sidebar_html(active_nav: str = "") -> str:
         f'</div>'
         f'<nav class="sidebar-nav">{"".join(nav_links)}</nav>'
         f'<div class="sidebar-footer">'
-        f'<div class="ver">v0.2.1</div>'
+        f'<div class="ver">v0.3.0</div>'
         f'<div>报告目录: {REPORT_DIR}</div>'
         f'</div>'
         f'</aside>'
@@ -1003,11 +1140,32 @@ def _build_dashboard() -> str:
 
 # ── Reports list page ────────────────────────────────────────────
 
-def _build_reports_list() -> str:
-    reports = _list_report_files()
+def _build_reports_list(project: str = "default") -> str:
+    reports = _list_report_files(project)
+    projects = _list_projects()
+
+    # Project selector
+    project_options = []
+    for p in projects:
+        sel = 'selected' if p == project else ''
+        project_options.append(f'<option value="{p}" {sel}>{p}</option>')
+
+    project_selector = (
+        f'<div style="display:flex;align-items:center;gap:8px;margin-bottom:16px">'
+        f'<span style="font-size:13px;color:var(--text-secondary)">项目:</span>'
+        f'<select id="project-selector" onchange="switchProject(this.value)" '
+        f'style="padding:6px 12px;border:1px solid var(--border);border-radius:6px;'
+        f'background:var(--bg-primary);color:var(--text-primary);font-size:13px">'
+        + "".join(project_options)
+        + f'</select>'
+        f'</div>'
+        f'<script>'
+        f'function switchProject(p){{window.location.href="/reports?project="+encodeURIComponent(p)}}'
+        f'</script>'
+    ) if len(projects) > 1 else ""
 
     if not reports:
-        content = '<div class="empty-big"><div class="empty-icon">📄</div><div class="empty-text">暂无报告</div></div>'
+        content = project_selector + '<div class="empty-big"><div class="empty-icon">📄</div><div class="empty-text">暂无报告</div></div>'
         return _base_page("报告列表", content, active_nav="/reports",
                           topbar_title="报告列表", topbar_extra=_time_filter_html())
 
@@ -1034,7 +1192,8 @@ def _build_reports_list() -> str:
         )
 
     content = (
-        f'<div class="card" style="margin-bottom:16px"><h2>对比报告</h2>'
+        project_selector
+        + f'<div class="card" style="margin-bottom:16px"><h2>对比报告</h2>'
         f'<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">'
         f'<select id="compare-base" style="padding:8px 12px;border:1px solid var(--border);'
         f'border-radius:6px;background:var(--bg-primary);color:var(--text-primary);font-size:13px">'
@@ -1591,15 +1750,15 @@ def _build_audit_page() -> str:
 # ─────────────────────────────────────────────────────────────────
 
 @app.get("/api/reports")
-async def api_reports():
+async def api_reports(project: str = "default"):
     """List all audit reports in the report directory."""
-    return _list_report_files()
+    return _list_report_files(project)
 
 
 @app.get("/api/reports/trends")
-async def api_reports_trends():
+async def api_reports_trends(project: str = "default"):
     """Return trend data for all reports: dates, costs, waste, findings, etc."""
-    reports = _list_report_files()
+    reports = _list_report_files(project)
     if not reports:
         return {
             "dates": [],
@@ -1757,7 +1916,7 @@ def _join_field(items) -> str:
 
 @app.post("/api/audit/run")
 async def api_audit_run(request: Request):
-    """Trigger an audit run. Body: {"input": "/path/to/events.jsonl", "output": "/optional/output.html"}."""
+    """Trigger an audit run. Body: {"input": "...", "output": "...", "project": "..."}."""
     try:
         body = await request.json()
     except Exception:
@@ -1769,10 +1928,15 @@ async def api_audit_run(request: Request):
     if not os.path.isfile(input_path):
         raise HTTPException(status_code=400, detail=f"Input file not found: {input_path}")
 
+    project = body.get("project", "default")
+    project = (project or "default").strip()
+
     today = datetime.now(timezone.utc).strftime("%Y%m%d")
     output_path = body.get("output")
     if not output_path:
-        output_path = str(REPORT_DIR / f"audit-{today}.html")
+        proj_dir = _get_project_dir(project)
+        proj_dir.mkdir(parents=True, exist_ok=True)
+        output_path = str(proj_dir / f"audit-{today}.html")
 
     # Ensure parent directory exists
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
@@ -1786,6 +1950,7 @@ async def api_audit_run(request: Request):
         "input": input_path,
         "status": "running",
         "report_url": None,
+        "project": project,
     }
     _AUDIT_TASKS.append(task_entry)
     # Keep only 50 most recent
@@ -1831,14 +1996,26 @@ async def api_audit_run(request: Request):
         )
 
     report_url = f"/reports/{today}"
+    if project != "default":
+        report_url = f"/reports/{today}?project={urllib.parse.quote(project)}"
     task_entry["status"] = "ok"
     task_entry["report_url"] = report_url
+
+    # P2-1: Auto-recheck marked_fixed findings against new report
+    try:
+        recheck_result = _recheck_fixed_findings(output_path)
+        if recheck_result:
+            task_entry["recheck"] = recheck_result
+    except Exception:
+        pass
+
     _save_tasks()
 
     return {
         "status": "ok",
         "report_url": report_url,
         "date": today,
+        "project": project,
     }
 
 
@@ -1897,6 +2074,574 @@ async def api_watchdog():
 
 
 # ─────────────────────────────────────────────────────────────────
+# P2-1: Fix tracking API
+# ─────────────────────────────────────────────────────────────────
+
+def _get_latest_findings() -> list[dict]:
+    """Get all findings from the latest report (across all projects)."""
+    reports = _list_report_files()
+    if not reports:
+        return []
+    latest = reports[0]
+    path = _get_report_path(latest["date"], latest.get("project", "default"))
+    if path is None:
+        return []
+    try:
+        html = path.read_text(encoding="utf-8")
+    except Exception:
+        return []
+    findings = _extract_embedded_findings(html)
+    if not findings:
+        findings = _parse_html_findings(html)
+    return findings
+
+
+def _recheck_fixed_findings(report_path: str) -> dict | None:
+    """Recheck all marked_fixed findings against a new report.
+
+    For each marked_fixed finding:
+    - If the finding still appears in the new report → status becomes "reopened"
+    - If the finding is absent → status becomes "closed"
+
+    Returns a summary dict or None if no recheck was needed.
+    """
+    fixed_list = _load_fixed_findings()
+    marked = [f for f in fixed_list if f.get("status") == "marked_fixed"]
+    if not marked:
+        return None
+
+    try:
+        html = Path(report_path).read_text(encoding="utf-8")
+    except Exception:
+        return None
+
+    current_findings = _extract_embedded_findings(html)
+    if not current_findings:
+        current_findings = _parse_html_findings(html)
+
+    current_keys: set[tuple] = set()
+    for f in current_findings:
+        current_keys.add((f["layer"], f["title"]))
+
+    recheck_time = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    reopened = 0
+    closed = 0
+
+    for entry in fixed_list:
+        if entry.get("status") != "marked_fixed":
+            continue
+        layer, title = _decode_finding_key(entry["key"])
+        if (layer, title) in current_keys:
+            entry["status"] = "reopened"
+            entry["rechecked_at"] = recheck_time
+            reopened += 1
+        else:
+            entry["status"] = "closed"
+            entry["rechecked_at"] = recheck_time
+            closed += 1
+
+    _save_fixed_findings(fixed_list)
+    return {
+        "rechecked_at": recheck_time,
+        "reopened": reopened,
+        "closed": closed,
+        "total": len(marked),
+    }
+
+
+@app.get("/api/findings/status")
+async def api_findings_status():
+    """Return all findings statuses from the latest report, merged with fix tracking."""
+    findings = _get_latest_findings()
+    if not findings:
+        return {"findings": [], "fixed_tracking": []}
+
+    # Aggregate by (layer, title)
+    groups: dict[tuple, dict] = {}
+    for f in findings:
+        key = (f["layer"], f["title"])
+        if key not in groups:
+            groups[key] = dict(f)
+            groups[key]["count"] = f.get("count", 1)
+        else:
+            groups[key]["count"] = groups[key].get("count", 1) + f.get("count", 1)
+            if (f.get("est_wasted_cost") or 0) > (groups[key].get("est_wasted_cost") or 0):
+                groups[key]["est_wasted_cost"] = f.get("est_wasted_cost")
+
+    # Load fixed tracking
+    fixed_list = _load_fixed_findings()
+    fixed_map: dict[str, dict] = {}
+    for entry in fixed_list:
+        fixed_map[entry["key"]] = entry
+
+    result_findings = []
+    for (layer, title), f in groups.items():
+        url_key = _finding_key(layer, title)
+        # Path params are auto-decoded by FastAPI, so fixed-findings.json stores
+        # the raw decoded key ("layer|title"). Look up with the raw key.
+        raw_key = f"{layer}|{title}"
+        status = fixed_map.get(raw_key, {}).get("status", "open")
+        result_findings.append({
+            "key": url_key,
+            "layer": layer,
+            "severity": f.get("severity", "info"),
+            "title": title,
+            "est_wasted_cost": f.get("est_wasted_cost"),
+            "count": f.get("count", 1),
+            "recommendation": f.get("recommendation", ""),
+            "status": status,
+        })
+
+    return {
+        "findings": result_findings,
+        "fixed_tracking": fixed_list,
+    }
+
+
+@app.post("/api/findings/{key:path}/mark-fixed")
+async def api_findings_mark_fixed(key: str, request: Request):
+    """Mark a finding as fixed. Body: {"note": "..."}."""
+    try:
+        body = await request.json() or {}
+    except Exception:
+        body = {}
+    note = str(body.get("note", "")).strip()
+
+    fixed_list = _load_fixed_findings()
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+    # Check if already exists
+    for entry in fixed_list:
+        if entry["key"] == key:
+            if entry.get("status") in ("closed",):
+                entry["status"] = "marked_fixed"
+                entry["marked_at"] = now
+                entry["note"] = note
+                entry.pop("rechecked_at", None)
+                _save_fixed_findings(fixed_list)
+                return {"status": "ok", "key": key, "action": "re-marked"}
+            # Already marked_fixed or reopened
+            entry["note"] = note or entry.get("note", "")
+            _save_fixed_findings(fixed_list)
+            return {"status": "ok", "key": key, "action": "note-updated"}
+
+    # New entry
+    entry = {
+        "key": key,
+        "status": "marked_fixed",
+        "marked_at": now,
+        "note": note,
+    }
+    fixed_list.append(entry)
+    _save_fixed_findings(fixed_list)
+    return {"status": "ok", "key": key, "action": "marked"}
+
+
+@app.get("/api/findings/{key:path}/status")
+async def api_findings_key_status(key: str):
+    """Get status for a single finding key."""
+    fixed_list = _load_fixed_findings()
+    for entry in fixed_list:
+        if entry["key"] == key:
+            return entry
+    # Not tracked → "open"
+    return {"key": key, "status": "open"}
+
+
+# ─────────────────────────────────────────────────────────────────
+# P2-2: Multi-project API
+# ─────────────────────────────────────────────────────────────────
+
+@app.get("/api/projects")
+async def api_projects():
+    """List all project names with report counts."""
+    projects = _list_projects()
+    result = []
+    for p in projects:
+        reports = _list_report_files(p)
+        result.append({
+            "name": p,
+            "report_count": len(reports),
+            "latest_date": reports[0]["date"] if reports else None,
+        })
+    return result
+
+
+# ─────────────────────────────────────────────────────────────────
+# P2-3: Notification API
+# ─────────────────────────────────────────────────────────────────
+
+@app.get("/api/notify/config")
+async def api_notify_get_config():
+    """Return the current notification config (safe, masked)."""
+    return get_notify_config()
+
+
+@app.post("/api/notify/config")
+async def api_notify_set_config(request: Request):
+    """Save notification config. Body: {"enabled": true, "channels": [...]}."""
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Body must be a JSON object")
+
+    if "enabled" not in body or "channels" not in body:
+        raise HTTPException(status_code=400, detail="Missing required fields: enabled, channels")
+
+    if not isinstance(body["channels"], list):
+        raise HTTPException(status_code=400, detail="channels must be a list")
+
+    ok = save_notify_config(body)
+    if not ok:
+        raise HTTPException(status_code=500, detail="Failed to save config")
+    return {"status": "ok"}
+
+
+@app.post("/api/notify/test")
+async def api_notify_test(request: Request):
+    """Send a test notification via configured channels."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    subject = str(body.get("subject", "AgentLens 通知测试"))
+    test_body = str(body.get("body", f"这是一条来自 AgentLens 的测试通知，发送时间: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}"))
+
+    results = send_notify(subject, test_body)
+    return {"status": "ok", "results": results}
+
+
+# ─────────────────────────────────────────────────────────────────
+# P2-1: Fix tracking page
+# ─────────────────────────────────────────────────────────────────
+
+def _build_fix_track_page() -> str:
+    """Build the fix tracking page with findings status table and tracking history."""
+    findings = _get_latest_findings()
+    fixed_list = _load_fixed_findings()
+    fixed_map: dict[str, dict] = {}
+    for entry in fixed_list:
+        fixed_map[entry["key"]] = entry
+
+    # Aggregate findings
+    groups: dict[tuple, dict] = {}
+    for f in findings:
+        key = (f["layer"], f["title"])
+        if key not in groups:
+            groups[key] = dict(f)
+            groups[key]["count"] = f.get("count", 1)
+        else:
+            groups[key]["count"] = groups[key].get("count", 1) + f.get("count", 1)
+            if (f.get("est_wasted_cost") or 0) > (groups[key].get("est_wasted_cost") or 0):
+                groups[key]["est_wasted_cost"] = f.get("est_wasted_cost")
+
+    def _sev_badge(sev: str) -> str:
+        colors = {"high": "badge-err", "medium": "badge-warn", "low": "badge-info", "info": "badge-info"}
+        return f'<span class="badge {colors.get(sev, "badge-info")}">{sev.upper()}</span>'
+
+    def _status_badge(status: str) -> str:
+        labels = {
+            "open": '<span class="badge badge-warn">待处理</span>',
+            "marked_fixed": '<span class="badge badge-info">已标记修复</span>',
+            "reopened": '<span class="badge badge-err">重新出现</span>',
+            "closed": '<span class="badge badge-ok">已闭环</span>',
+        }
+        return labels.get(status, f'<span class="badge">{status}</span>')
+
+    # Build findings table rows
+    rows = []
+    for (layer, title), f in sorted(groups.items(), key=lambda x: (x[1].get("est_wasted_cost") or 0), reverse=True):
+        url_key = _finding_key(layer, title)
+        tracked = fixed_map.get(url_key, {})
+        status = tracked.get("status", "open")
+        note = tracked.get("note", "")
+        count_str = f' x{f["count"]}' if f.get("count", 1) > 1 else ""
+        waste_val = f.get("est_wasted_cost")
+        waste_display = f"{waste_val:.2f}" if waste_val is not None else "-"
+        rows.append(
+            f'<tr>'
+            f'<td>{_sev_badge(f.get("severity", "info"))}</td>'
+            f'<td>{f["layer"]}</td>'
+            f'<td>{f["title"][:60]}{"…" if len(f["title"]) > 60 else ""}{count_str}</td>'
+            f'<td class="num">{waste_display}</td>'
+            f'<td>{_status_badge(status)}</td>'
+            f'<td>'
+            f'<button class="btn btn-ghost btn-sm" onclick="markFixed(\'{url_key}\')" '
+            f'{"disabled" if status in ("marked_fixed", "closed") else ""}>标记已修复</button>'
+            f'</td>'
+            f'</tr>'
+        )
+
+    # Build tracking history table
+    tracking_rows = []
+    for entry in reversed(fixed_list):
+        key = entry.get("key", "")
+        layer, title = _decode_finding_key(key)
+        tracking_rows.append(
+            f'<tr>'
+            f'<td>{title[:50]}{"…" if len(title) > 50 else ""}</td>'
+            f'<td>{layer}</td>'
+            f'<td>{_status_badge(entry.get("status", ""))}</td>'
+            f'<td>{entry.get("marked_at", entry.get("rechecked_at", "-"))}</td>'
+            f'<td>{entry.get("note", "-")}</td>'
+            f'</tr>'
+        )
+
+    content = (
+        f'<div class="card"><h2>🔧 发现列表</h2>'
+        f'<div class="search-box">'
+        f'<input type="text" id="finding-search" placeholder="搜索发现标题…" oninput="filterFindings()">'
+        f'<select id="status-filter" onchange="filterFindings()" style="padding:8px 12px;border:1px solid var(--border);'
+        f'border-radius:6px;background:var(--bg-primary);color:var(--text-primary);font-size:13px">'
+        f'<option value="">全部状态</option>'
+        f'<option value="open">待处理</option>'
+        f'<option value="marked_fixed">已标记修复</option>'
+        f'<option value="reopened">重新出现</option>'
+        f'<option value="closed">已闭环</option>'
+        f'</select>'
+        f'</div>'
+        f'<table id="findings-table"><thead><tr>'
+        f'<th>严重度</th><th>层</th><th>标题</th><th>预估浪费</th><th>状态</th><th>操作</th>'
+        f'</tr></thead><tbody>{"".join(rows) if rows else "<tr><td colspan=6 class=empty>暂无发现</td></tr>"}'
+        f'</tbody></table></div>'
+        f'<div class="card"><h2>📋 修复跟踪记录</h2>'
+        + (f'<table><thead><tr><th>标题</th><th>层</th><th>状态</th><th>时间</th><th>备注</th></tr></thead>'
+           f'<tbody>{"".join(tracking_rows) if tracking_rows else "<tr><td colspan=5 class=empty>暂无记录</td></tr>"}'
+           f'</tbody></table>'
+           if tracking_rows else '<p class="empty">暂无修复跟踪记录</p>')
+        + '</div>'
+        # Modal for mark-fixed note
+        + '<div id="mark-modal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;'
+        'background:rgba(0,0,0,0.6);z-index:1000;align-items:center;justify-content:center">'
+        '<div style="background:var(--bg-panel);border:1px solid var(--border);border-radius:8px;'
+        'padding:24px;min-width:400px;max-width:500px">'
+        '<h3 style="margin-bottom:12px">标记已修复</h3>'
+        '<div class="form-group"><label>备注（可选）</label>'
+        '<input type="text" id="mark-note" placeholder="例如：已启用压缩策略">'
+        '</div>'
+        '<div style="display:flex;gap:8px;justify-content:flex-end">'
+        '<button class="btn btn-ghost" onclick="closeModal()">取消</button>'
+        '<button class="btn btn-primary" id="mark-confirm-btn" onclick="confirmMark()">确认</button>'
+        '</div>'
+        '</div></div>'
+        + '<script>'
+        'var currentKey="";'
+        'function markFixed(key){'
+        '  currentKey=key;'
+        '  document.getElementById("mark-modal").style.display="flex";'
+        '  document.getElementById("mark-note").value="";'
+        '  document.getElementById("mark-note").focus();'
+        '}'
+        'function closeModal(){'
+        '  document.getElementById("mark-modal").style.display="none";'
+        '  currentKey="";'
+        '}'
+        'async function confirmMark(){'
+        '  var note=document.getElementById("mark-note").value.trim();'
+        '  var btn=document.getElementById("mark-confirm-btn");'
+        '  btn.disabled=true;btn.textContent="提交中…";'
+        '  try{'
+        '    var resp=await fetch("/api/findings/"+encodeURIComponent(currentKey)+"/mark-fixed",{'
+        '      method:"POST",'
+        '      headers:{"Content-Type":"application/json"},'
+        '      body:JSON.stringify({note:note})'
+        '    });'
+        '    if(resp.ok){window.location.reload()}'
+        '    else{alert("标记失败")}'
+        '  }catch(e){alert("请求失败: "+e.message)}'
+        '  finally{btn.disabled=false;btn.textContent="确认"}'
+        '}'
+        'function filterFindings(){'
+        '  var q=document.getElementById("finding-search").value.trim().toLowerCase();'
+        '  var s=document.getElementById("status-filter").value;'
+        '  var rows=document.querySelectorAll("#findings-table tbody tr");'
+        '  rows.forEach(function(r){'
+        '    var title=r.cells[2].textContent.toLowerCase();'
+        '    var statusBadge=r.cells[4].textContent;'
+        '    var statusMap={"待处理":"open","已标记修复":"marked_fixed","重新出现":"reopened","已闭环":"closed"};'
+        '    var status="";'
+        '    for(var k in statusMap){if(statusBadge.includes(k)){status=statusMap[k];break}}'
+        '    var matchQ=!q||title.includes(q);'
+        '    var matchS=!s||status===s;'
+        '    r.style.display=(matchQ&&matchS)?"":"none";'
+        '  });'
+        '}'
+        '</script>'
+    )
+
+    return _base_page(
+        "修复跟踪", content, active_nav="/fix-track",
+        topbar_title="修复跟踪",
+    )
+
+
+# ─────────────────────────────────────────────────────────────────
+# P2-3: Notification config page
+# ─────────────────────────────────────────────────────────────────
+
+def _build_notify_page() -> str:
+    """Build the notification configuration page."""
+    config = get_notify_config()
+    config_js = _js(config)
+
+    channels_html = ""
+    if config.get("channels"):
+        for i, ch in enumerate(config["channels"]):
+            ch_type = ch.get("type", "")
+            ch_type_label = {"feishu": "飞书", "webhook": "Webhook", "command": "命令"}.get(ch_type, ch_type)
+            detail = ""
+            if ch_type == "feishu":
+                detail = f"target: {ch.get('target', '-')} | token_cmd: {ch.get('token_cmd', '-')}"
+            elif ch_type == "webhook":
+                detail = f"url: {ch.get('url', '-')}"
+            elif ch_type == "command":
+                detail = f"cmd: {ch.get('cmd', '-')}"
+            channels_html += (
+                f'<tr>'
+                f'<td><span class="badge badge-info">{ch_type_label}</span></td>'
+                f'<td>{detail}</td>'
+                f'<td><button class="btn btn-ghost btn-sm" onclick="removeChannel({i})">删除</button></td>'
+                f'</tr>'
+            )
+
+    js_script = (
+        '<script>\n'
+        f'var CONFIG={config_js};\n'
+        'document.getElementById("ch-type").addEventListener("change",function(){\n'
+        '  var t=this.value;\n'
+        '  document.getElementById("feishu-fields").style.display=t==="feishu"?"":"none";\n'
+        '  document.getElementById("webhook-fields").style.display=t==="webhook"?"":"none";\n'
+        '  document.getElementById("command-fields").style.display=t==="command"?"":"none";\n'
+        '});\n'
+        'function toggleEnabled(){\n'
+        '  CONFIG.enabled=document.getElementById("notify-enabled").checked;\n'
+        '  saveConfig();\n'
+        '}\n'
+        'async function saveConfig(){\n'
+        '  try{\n'
+        '    var resp=await fetch("/api/notify/config",{\n'
+        '      method:"POST",headers:{"Content-Type":"application/json"},\n'
+        '      body:JSON.stringify(CONFIG)\n'
+        '    });\n'
+        '    if(!resp.ok){alert("保存失败")}\n'
+        '  }catch(e){alert("保存失败: "+e.message)}\n'
+        '}\n'
+        'function addChannel(){\n'
+        '  var t=document.getElementById("ch-type").value;\n'
+        '  var ch={type:t};\n'
+        '  if(t==="feishu"){\n'
+        '    ch.target=document.getElementById("feishu-target").value.trim();\n'
+        '    ch.token_cmd=document.getElementById("feishu-token-cmd").value.trim();\n'
+        '  }else if(t==="webhook"){\n'
+        '    ch.url=document.getElementById("webhook-url").value.trim();\n'
+        '    ch.secret=document.getElementById("webhook-secret").value.trim();\n'
+        '  }else if(t==="command"){\n'
+        '    ch.cmd=document.getElementById("command-cmd").value.trim();\n'
+        '  }\n'
+        '  if(!CONFIG.channels)CONFIG.channels=[];\n'
+        '  CONFIG.channels.push(ch);\n'
+        '  saveConfig().then(function(){window.location.reload()});\n'
+        '}\n'
+        'function removeChannel(idx){\n'
+        '  if(!confirm("确认删除此渠道?"))return;\n'
+        '  CONFIG.channels.splice(idx,1);\n'
+        '  saveConfig().then(function(){window.location.reload()});\n'
+        '}\n'
+        'async function testNotify(){\n'
+        '  var subj=document.getElementById("test-subject").value.trim();\n'
+        '  var body=document.getElementById("test-body").value.trim();\n'
+        '  var result=document.getElementById("test-result");\n'
+        "  result.innerHTML='<div class=\"result-box info\">发送中…</div>';\n"
+        '  try{\n'
+        '    var resp=await fetch("/api/notify/test",{\n'
+        '      method:"POST",headers:{"Content-Type":"application/json"},\n'
+        '      body:JSON.stringify({subject:subj,body:body})\n'
+        '    });\n'
+        '    var data=await resp.json();\n'
+        '    if(data.status==="ok"){\n'
+        '      var html="";\n'
+        '      data.results.forEach(function(r){\n'
+        '        var cls=r.status==="ok"?"success":"error";\n'
+        "        html+='<div class=\"result-box '+cls+'\">'+r.channel+': '+r.status+\n"
+        "        +(r.detail?\" — \"+r.detail:\"\")+'</div>';\n"
+        '      });\n'
+        '      result.innerHTML=html;\n'
+        '    }else{\n'
+        "      result.innerHTML='<div class=\"result-box error\">发送失败</div>';\n"
+        '    }\n'
+        "  }catch(e){result.innerHTML='<div class=\"result-box error\">请求失败: '+e.message+'</div>'}\n"
+        '}\n'
+        '</script>'
+    )
+
+    content = (
+        f'<div class="card"><h2>🔔 通知渠道配置</h2>'
+        f'<div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">'
+        f'<label style="display:flex;align-items:center;gap:8px;font-size:13px">'
+        f'<input type="checkbox" id="notify-enabled" onchange="toggleEnabled()" '
+        f'{"checked" if config.get("enabled") else ""}>'
+        f'启用通知</label>'
+        f'<span style="font-size:12px;color:var(--text-secondary)">'
+        f'关闭时回退到 hermes send -t feishu 默认行为</span>'
+        f'</div>'
+        f'<h3>当前渠道</h3>'
+        + (f'<table><thead><tr><th>类型</th><th>详情</th><th>操作</th></tr></thead>'
+           f'<tbody>{channels_html if channels_html else "<tr><td colspan=3 class=empty>未配置渠道</td></tr>"}'
+           f'</tbody></table>'
+           if channels_html else '<p class="empty">未配置渠道</p>')
+        + '</div>'
+        f'<div class="card"><h2>添加渠道</h2>'
+        f'<div class="form-group"><label>渠道类型</label>'
+        f'<select id="ch-type" style="padding:10px 14px;border:1px solid var(--border);'
+        f'border-radius:6px;font-size:14px;background:var(--bg-primary);color:var(--text-primary);width:100%">'
+        f'<option value="feishu">飞书 (hermes send)</option>'
+        f'<option value="webhook">Webhook (HTTP POST)</option>'
+        f'<option value="command">自定义命令</option>'
+        f'</select></div>'
+        f'<div class="form-group" id="feishu-fields">'
+        f'<label>飞书目标 (target)</label>'
+        f'<input type="text" id="feishu-target" placeholder="例如: oc_xxx">'
+        f'<label style="margin-top:8px">Token 获取命令 (可选)</label>'
+        f'<input type="text" id="feishu-token-cmd" placeholder="例如: cat /path/to/token">'
+        f'</div>'
+        f'<div class="form-group" id="webhook-fields" style="display:none">'
+        f'<label>Webhook URL</label>'
+        f'<input type="text" id="webhook-url" placeholder="https://hooks.example.com/webhook">'
+        f'<label style="margin-top:8px">密钥 (可选)</label>'
+        f'<input type="text" id="webhook-secret" placeholder="bearer token 或 secret">'
+        f'</div>'
+        f'<div class="form-group" id="command-fields" style="display:none">'
+        f'<label>命令模板</label>'
+        f'<input type="text" id="command-cmd" placeholder="hermes send -t feishu -s {{subject}} -f {{body}}">'
+        f'<span style="font-size:11px;color:var(--text-secondary)">'
+        f'支持 {{subject}} {{body}} 占位符</span>'
+        f'</div>'
+        f'<button class="btn btn-primary" onclick="addChannel()">添加渠道</button>'
+        f'<div id="add-result"></div>'
+        f'</div>'
+        f'<div class="card"><h2>测试通知</h2>'
+        f'<div class="form-group"><label>测试主题</label>'
+        f'<input type="text" id="test-subject" value="AgentLens 通知测试" placeholder="通知主题">'
+        f'</div>'
+        f'<div class="form-group"><label>测试内容</label>'
+        f'<input type="text" id="test-body" value="这是一条来自 AgentLens 的测试通知" placeholder="通知内容">'
+        f'</div>'
+        f'<button class="btn btn-success" onclick="testNotify()">发送测试通知</button>'
+        f'<div id="test-result"></div>'
+        f'</div>'
+        + js_script
+    )
+
+    return _base_page(
+        "通知配置", content, active_nav="/notify",
+        topbar_title="通知配置",
+    )
+
+
+# ─────────────────────────────────────────────────────────────────
 # Pages: HTML UI
 # ─────────────────────────────────────────────────────────────────
 
@@ -1907,9 +2652,9 @@ async def page_dashboard():
 
 
 @app.get("/reports", response_class=HTMLResponse)
-async def page_reports():
+async def page_reports(project: str = "default"):
     """Full report list page with sortable table and search."""
-    return _build_reports_list()
+    return _build_reports_list(project)
 
 
 @app.get("/audit", response_class=HTMLResponse)
@@ -1940,3 +2685,15 @@ async def page_report_compare(base: str = "", curr: str = ""):
 async def page_report_detail(date: str):
     """Report detail page with iframe-embedded HTML (full-width layout)."""
     return _build_report_detail(date)
+
+
+@app.get("/fix-track", response_class=HTMLResponse)
+async def page_fix_track():
+    """Fix tracking page: findings status table and tracking history."""
+    return _build_fix_track_page()
+
+
+@app.get("/notify", response_class=HTMLResponse)
+async def page_notify():
+    """Notification configuration page."""
+    return _build_notify_page()
