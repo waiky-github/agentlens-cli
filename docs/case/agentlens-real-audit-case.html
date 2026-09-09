@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AgentLens 审计报告</title>
+<style>*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+  background:#f5f6fa;color:#2d3436;line-height:1.6;padding:20px}
+.container{max-width:1100px;margin:0 auto}
+.header{background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;padding:30px;
+  border-radius:12px;margin-bottom:24px}
+.header h1{font-size:24px;margin-bottom:16px}
+.header-meta{display:flex;flex-wrap:wrap;gap:16px;font-size:13px;opacity:0.85;margin-bottom:20px}
+.header-meta span{white-space:nowrap}
+.summary-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
+.card{background:rgba(255,255,255,0.12);padding:16px;border-radius:8px;text-align:center}
+.card-label{font-size:12px;opacity:0.7;margin-bottom:4px}
+.card-value{font-size:20px;font-weight:700}
+.card-sub{font-size:12px;margin-top:4px;opacity:0.8}
+.section{background:#fff;border-radius:10px;padding:24px;margin-bottom:20px;
+  box-shadow:0 1px 4px rgba(0,0,0,0.06)}
+.section h2{font-size:18px;border-bottom:2px solid #eee;padding-bottom:10px;margin-bottom:16px}
+.section h3{font-size:15px;margin:20px 0 10px;color:#555}
+.section h4{font-size:14px;margin:16px 0 8px;color:#666}
+.metrics-bar{display:flex;flex-wrap:wrap;gap:16px;font-size:13px;margin-bottom:16px;
+  padding:12px;background:#f8f9fa;border-radius:6px}
+.metrics-bar span{white-space:nowrap}
+.highlight{background:#ffe0e0;padding:2px 8px;border-radius:4px}
+table{width:100%;border-collapse:collapse;font-size:13px;margin:8px 0 16px}
+th,td{padding:8px 12px;text-align:left;border-bottom:1px solid #eee}
+th{background:#f8f9fa;font-weight:600;color:#555}
+td.num{text-align:right;font-variant-numeric:tabular-nums}
+tr:hover{background:#f8f9fa}
+.nodata{color:#999;font-style:italic;padding:10px}
+.finding{border-radius:6px;padding:12px 16px;margin-bottom:8px}
+.finding-sev{display:inline-block;color:#fff;font-size:10px;font-weight:700;
+  padding:2px 8px;border-radius:3px;margin-right:10px;vertical-align:middle}
+.finding-detail{font-size:12px;color:#555;margin:6px 0 0 0}
+.finding-rec{font-size:12px;color:#198754;margin:4px 0 0 0}
+.finding-meta{font-size:11px;color:#888;margin:2px 0 0 0}
+.bypass-banner{background:#dc3545;color:#fff;padding:10px 16px;border-radius:6px;
+  font-weight:700;margin-bottom:12px;text-align:center}
+.graph-svg-wrap{text-align:center;margin:16px 0}
+.graph-svg-wrap svg{max-width:100%;height:auto}
+.graph-legend{display:flex;flex-wrap:wrap;gap:12px;justify-content:center;
+  margin-top:10px;font-size:11px}
+.legend-item{display:flex;align-items:center;gap:4px}
+.legend-swatch{display:inline-block;width:14px;height:14px;border-radius:3px}
+.footer{margin-top:30px;padding:20px;text-align:center;color:#888;font-size:12px;
+  border-top:1px solid #ddd}
+.disclaimer{color:#aaa;font-size:11px;margin-top:6px}
+.finding-regs{margin-top:8px;padding:8px 10px;background:#f0f4ff;border-radius:4px;
+  font-size:11px;color:#334}
+.finding-regs-label{font-weight:700;color:#0066cc}
+.regs-list{margin:4px 0 0 16px;padding:0;list-style:disc}
+.regs-list li{margin:2px 0;line-height:1.4}
+.finding-rems{margin-top:8px;padding:8px 10px;background:#f0fff4;border-radius:4px;
+  font-size:11px;color:#334}
+.finding-rems-label{font-weight:700;color:#198754}
+.rems-list{margin:4px 0 0 16px;padding:0;list-style:disc}
+.rems-list li{margin:4px 0;line-height:1.4}
+.rems-pri{display:inline-block;color:#fff;font-size:9px;font-weight:700;
+  padding:1px 6px;border-radius:3px;margin-right:4px;vertical-align:middle}
+.rems-detail{color:#555;font-size:10px}
+.prio-list{margin:4px 0 12px 20px;padding:0;font-size:13px}
+.prio-list li{margin:2px 0;line-height:1.4}
+</style>
+<meta name="agentlens-integrity" content='{"algorithm":"sha256","document_hash":"058e2aeea2feea4962fc9ba72c8fc759bc02c46c3284b06afdaa945d2c92a1f4","report_hash":"345c5a57210c3cd490fb923217789e18067e1c4ae84267bca7d149d5800e4bcd","result_hash":"bed687a20b337bbfac829fa7b61e976164b056d57cc7d6035690c6da9452c7aa"}'/></head>
+<body>
+<div class="container">
+<div class="header"><h1>AgentLens 审计报告</h1><div class="header-meta"><span>审计ID: <strong>g-auto</strong></span><span>输入文件: <strong>examples/hermes_gateway_events_anon.jsonl</strong></span><span>生成时间: <strong>2026-09-09 03:03:54 UTC</strong></span><span>事件数: <strong>11268</strong></span></div><div class="summary-cards"><div class="card"><div class="card-label">决策判定</div><div class="card-value">no findings</div><div class="card-sub">未检测到审批绕过</div></div><div class="card"><div class="card-label">闭环率</div><div class="card-value">0.0%</div></div><div class="card"><div class="card-label">证据完整性</div><div class="card-value">100.0%</div></div><div class="card"><div class="card-label">可避免成本占比</div><div class="card-value">76.7%</div></div><div class="card"><div class="card-label">影子智能体</div><div class="card-value">影子智能体发现: 4</div></div><div class="card"><div class="card-label">决策权限合规</div><div class="card-value">合规无发现</div></div></div></div><div class="section" id="layer-graph"><h2>1. 协作图谱</h2><div class="metrics-bar"><span>节点: <strong>3</strong></span><span>边: <strong>0</strong></span><span>派发任务: <strong>0</strong></span><span>已完成: <strong>0</strong></span><span>闭环率: <strong>0.0%</strong></span></div><div class="graph-svg-wrap"><svg viewBox="0 0 800 520" xmlns="http://www.w3.org/2000/svg"><circle cx="400.0" cy="60.0" r="24" fill="#6c757d" stroke="#fff" stroke-width="2" opacity="0.9"><title>user:unknown (worker)</title></circle><text x="400.0" y="100.0" text-anchor="middle" font-size="10" fill="#333">user:unknown</text><circle cx="573.2" cy="360.0" r="24" fill="#6c757d" stroke="#fff" stroke-width="2" opacity="0.9"><title>agent:main (worker)</title></circle><text x="573.2" y="400.0" text-anchor="middle" font-size="10" fill="#333">agent:main</text><circle cx="226.8" cy="360.0" r="24" fill="#6c757d" stroke="#fff" stroke-width="2" opacity="0.9"><title>user:guest_001 (worker)</title></circle><text x="226.8" y="400.0" text-anchor="middle" font-size="10" fill="#333">user:guest_0</text></svg><div class="graph-legend"><span class="legend-item"><span class="legend-swatch" style="background:#6c757d"></span>task_dispatch</span><span class="legend-item"><span class="legend-swatch" style="background:#198754"></span>task_completion</span><span class="legend-item"><span class="legend-swatch" style="background:#0d6efd"></span>approval</span><span class="legend-item"><span class="legend-swatch" style="background:#6f42c1"></span>info_flow</span></div></div><h3>图谱发现</h3><p class='nodata'>无发现项</p></div><div class="section" id="layer-decision"><h2>2. 决策审计</h2><div class="metrics-bar"><span>决策链步骤: <strong>0</strong></span><span>摘要: <strong>no findings</strong></span></div><h3>决策发现</h3><p class='nodata'>无发现项</p></div><div class="section" id="layer-evidence"><h2>3. 证据链</h2><div class="metrics-bar"><span>声明检查: <strong>11268</strong></span><span>已验证: <strong>11268</strong></span><span>完整度: <strong>100.0%</strong></span></div><h3>证据发现</h3><p class='nodata'>无发现项</p></div><div class="section" id="layer-cost"><h2>4. 成本治理</h2><div class="metrics-bar"><span>总输入 Token: <strong>344,790,090</strong></span><span>总输出 Token: <strong>2,346,915</strong></span><span>总成本: <strong>846.271536 CNY</strong></span><span>浪费发现: <strong>435</strong></span><span>预估浪费: <strong>649.394258 CNY</strong></span><span class="highlight">可避免占比: <strong>76.7%</strong></span></div><h3>各 Agent 成本</h3><table><thead><tr><th>Agent</th><th>输入 Token</th><th>输出 Token</th><th>模型调用</th><th>工具调用</th><th>成本 (CNY)</th></tr></thead><tbody><tr><td>agent:main</td><td class='num'>344,790,090</td><td class='num'>2,346,915</td><td class='num'>3947</td><td class='num'>3520</td><td class='num'>846.271536</td></tr></tbody></table><h3>Top 浪费发现</h3><div class="finding" style="border-left:4px solid #dc3545;background:#fff5f5"><span class="finding-sev" style="background:#dc3545">HIGH</span><strong>session-level context bloat: no deliberate compaction</strong>
+<p class="finding-rec">建议: compact/reset context deliberately at session boundaries instead of silently growing it</p>
+<p class="finding-meta">预估浪费: 22.525070 CNY</p>
+<div class="finding-regs">
+<span class="finding-regs-label">法规依据:</span>
+<ul class="regs-list">
+<li>EU AI Act (2024/1689) — Art. 12: logging — 上下文膨胀可能导致日志记录不完整或成本失控</li>
+<li>网信办《智能体规范应用与创新发展实施意见》(2026-05-08) — 内生安全: 权限管控 — 未受控的上下文增长可能影响系统行为可预测性</li>
+</ul></div>
+<div class="finding-rems">
+<span class="finding-rems-label">修复建议:</span>
+<ul class="rems-list">
+<li><span class="rems-pri" style="background:#fd7e14">MEDIUM</span> <strong>启用会话级上下文压缩策略</strong>
+<br><span class="rems-detail">在网关层配置上下文压缩策略：当会话 token 超过阈值（如 64K）时自动触发压缩，保留关键信息</span>
+</li>
+<li><span class="rems-pri" style="background:#fd7e14">MEDIUM</span> <strong>设置单会话 token 上限</strong>
+<br><span class="rems-detail">在网关层设置单会话 token 硬上限（如 128K），超限时拒绝新请求并提示用户重置会话</span>
+</li>
+</ul></div>
+</div>
+<div class="finding" style="border-left:4px solid #dc3545;background:#fff5f5"><span class="finding-sev" style="background:#dc3545">HIGH</span><strong>session-level context bloat: no deliberate compaction</strong>
+<p class="finding-rec">建议: compact/reset context deliberately at session boundaries instead of silently growing it</p>
+<p class="finding-meta">预估浪费: 16.755564 CNY</p>
+<div class="finding-regs">
+<span class="finding-regs-label">法规依据:</span>
+<ul class="regs-list">
+<li>EU AI Act (2024/1689) — Art. 12: logging — 上下文膨胀可能导致日志记录不完整或成本失控</li>
+<li>网信办《智能体规范应用与创新发展实施意见》(2026-05-08) — 内生安全: 权限管控 — 未受控的上下文增长可能影响系统行为可预测性</li>
+</ul></div>
+<div class="finding-rems">
+<span class="finding-rems-label">修复建议:</span>
+<ul class="rems-list">
+<li><span class="rems-pri" style="background:#fd7e14">MEDIUM</span> <strong>启用会话级上下文压缩策略</strong>
+<br><span class="rems-detail">在网关层配置上下文压缩策略：当会话 token 超过阈值（如 64K）时自动触发压缩，保留关键信息</span>
+</li>
+<li><span class="rems-pri" style="background:#fd7e14">MEDIUM</span> <strong>设置单会话 token 上限</strong>
+<br><span class="rems-detail">在网关层设置单会话 token 硬上限（如 128K），超限时拒绝新请求并提示用户重置会话</span>
+</li>
+</ul></div>
+</div>
+<div class="finding" style="border-left:4px solid #dc3545;background:#fff5f5"><span class="finding-sev" style="background:#dc3545">HIGH</span><strong>session-level context bloat: no deliberate compaction</strong>
+<p class="finding-rec">建议: compact/reset context deliberately at session boundaries instead of silently growing it</p>
+<p class="finding-meta">预估浪费: 13.444344 CNY</p>
+<div class="finding-regs">
+<span class="finding-regs-label">法规依据:</span>
+<ul class="regs-list">
+<li>EU AI Act (2024/1689) — Art. 12: logging — 上下文膨胀可能导致日志记录不完整或成本失控</li>
+<li>网信办《智能体规范应用与创新发展实施意见》(2026-05-08) — 内生安全: 权限管控 — 未受控的上下文增长可能影响系统行为可预测性</li>
+</ul></div>
+<div class="finding-rems">
+<span class="finding-rems-label">修复建议:</span>
+<ul class="rems-list">
+<li><span class="rems-pri" style="background:#fd7e14">MEDIUM</span> <strong>启用会话级上下文压缩策略</strong>
+<br><span class="rems-detail">在网关层配置上下文压缩策略：当会话 token 超过阈值（如 64K）时自动触发压缩，保留关键信息</span>
+</li>
+<li><span class="rems-pri" style="background:#fd7e14">MEDIUM</span> <strong>设置单会话 token 上限</strong>
+<br><span class="rems-detail">在网关层设置单会话 token 硬上限（如 128K），超限时拒绝新请求并提示用户重置会话</span>
+</li>
+</ul></div>
+</div>
+<div class="finding" style="border-left:4px solid #dc3545;background:#fff5f5"><span class="finding-sev" style="background:#dc3545">HIGH</span><strong>session-level context bloat: no deliberate compaction</strong>
+<p class="finding-rec">建议: compact/reset context deliberately at session boundaries instead of silently growing it</p>
+<p class="finding-meta">预估浪费: 13.265222 CNY</p>
+<div class="finding-regs">
+<span class="finding-regs-label">法规依据:</span>
+<ul class="regs-list">
+<li>EU AI Act (2024/1689) — Art. 12: logging — 上下文膨胀可能导致日志记录不完整或成本失控</li>
+<li>网信办《智能体规范应用与创新发展实施意见》(2026-05-08) — 内生安全: 权限管控 — 未受控的上下文增长可能影响系统行为可预测性</li>
+</ul></div>
+<div class="finding-rems">
+<span class="finding-rems-label">修复建议:</span>
+<ul class="rems-list">
+<li><span class="rems-pri" style="background:#fd7e14">MEDIUM</span> <strong>启用会话级上下文压缩策略</strong>
+<br><span class="rems-detail">在网关层配置上下文压缩策略：当会话 token 超过阈值（如 64K）时自动触发压缩，保留关键信息</span>
+</li>
+<li><span class="rems-pri" style="background:#fd7e14">MEDIUM</span> <strong>设置单会话 token 上限</strong>
+<br><span class="rems-detail">在网关层设置单会话 token 硬上限（如 128K），超限时拒绝新请求并提示用户重置会话</span>
+</li>
+</ul></div>
+</div>
+<div class="finding" style="border-left:4px solid #dc3545;background:#fff5f5"><span class="finding-sev" style="background:#dc3545">HIGH</span><strong>session-level context bloat: no deliberate compaction</strong>
+<p class="finding-rec">建议: compact/reset context deliberately at session boundaries instead of silently growing it</p>
+<p class="finding-meta">预估浪费: 13.156642 CNY</p>
+<div class="finding-regs">
+<span class="finding-regs-label">法规依据:</span>
+<ul class="regs-list">
+<li>EU AI Act (2024/1689) — Art. 12: logging — 上下文膨胀可能导致日志记录不完整或成本失控</li>
+<li>网信办《智能体规范应用与创新发展实施意见》(2026-05-08) — 内生安全: 权限管控 — 未受控的上下文增长可能影响系统行为可预测性</li>
+</ul></div>
+<div class="finding-rems">
+<span class="finding-rems-label">修复建议:</span>
+<ul class="rems-list">
+<li><span class="rems-pri" style="background:#fd7e14">MEDIUM</span> <strong>启用会话级上下文压缩策略</strong>
+<br><span class="rems-detail">在网关层配置上下文压缩策略：当会话 token 超过阈值（如 64K）时自动触发压缩，保留关键信息</span>
+</li>
+<li><span class="rems-pri" style="background:#fd7e14">MEDIUM</span> <strong>设置单会话 token 上限</strong>
+<br><span class="rems-detail">在网关层设置单会话 token 硬上限（如 128K），超限时拒绝新请求并提示用户重置会话</span>
+</li>
+</ul></div>
+</div>
+<div class="finding" style="border-left:4px solid #dc3545;background:#fff5f5"><span class="finding-sev" style="background:#dc3545">HIGH</span><strong>session-level context bloat: no deliberate compaction</strong>
+<p class="finding-rec">建议: compact/reset context deliberately at session boundaries instead of silently growing it</p>
+<p class="finding-meta">预估浪费: 12.823716 CNY</p>
+<div class="finding-regs">
+<span class="finding-regs-label">法规依据:</span>
+<ul class="regs-list">
+<li>EU AI Act (2024/1689) — Art. 12: logging — 上下文膨胀可能导致日志记录不完整或成本失控</li>
+<li>网信办《智能体规范应用与创新发展实施意见》(2026-05-08) — 内生安全: 权限管控 — 未受控的上下文增长可能影响系统行为可预测性</li>
+</ul></div>
+<div class="finding-rems">
+<span class="finding-rems-label">修复建议:</span>
+<ul class="rems-list">
+<li><span class="rems-pri" style="background:#fd7e14">MEDIUM</span> <strong>启用会话级上下文压缩策略</strong>
+<br><span class="rems-detail">在网关层配置上下文压缩策略：当会话 token 超过阈值（如 64K）时自动触发压缩，保留关键信息</span>
+</li>
+<li><span class="rems-pri" style="background:#fd7e14">MEDIUM</span> <strong>设置单会话 token 上限</strong>
+<br><span class="rems-detail">在网关层设置单会话 token 硬上限（如 128K），超限时拒绝新请求并提示用户重置会话</span>
+</li>
+</ul></div>
+</div>
+<div class="finding" style="border-left:4px solid #dc3545;background:#fff5f5"><span class="finding-sev" style="background:#dc3545">HIGH</span><strong>session-level context bloat: no deliberate compaction</strong>
+<p class="finding-rec">建议: compact/reset context deliberately at session boundaries instead of silently growing it</p>
+<p class="finding-meta">预估浪费: 11.617094 CNY</p>
+<div class="finding-regs">
+<span class="finding-regs-label">法规依据:</span>
+<ul class="regs-list">
+<li>EU AI Act (2024/1689) — Art. 12: logging — 上下文膨胀可能导致日志记录不完整或成本失控</li>
+<li>网信办《智能体规范应用与创新发展实施意见》(2026-05-08) — 内生安全: 权限管控 — 未受控的上下文增长可能影响系统行为可预测性</li>
+</ul></div>
+<div class="finding-rems">
+<span class="finding-rems-label">修复建议:</span>
+<ul class="rems-list">
+<li><span class="rems-pri" style="background:#fd7e14">MEDIUM</span> <strong>启用会话级上下文压缩策略</strong>
+<br><span class="rems-detail">在网关层配置上下文压缩策略：当会话 token 超过阈值（如 64K）时自动触发压缩，保留关键信息</span>
+</li>
+<li><span class="rems-pri" style="background:#fd7e14">MEDIUM</span> <strong>设置单会话 token 上限</strong>
+<br><span class="rems-detail">在网关层设置单会话 token 硬上限（如 128K），超限时拒绝新请求并提示用户重置会话</span>
+</li>
+</ul></div>
+</div>
+<div class="finding" style="border-left:4px solid #dc3545;background:#fff5f5"><span class="finding-sev" style="background:#dc3545">HIGH</span><strong>session-level context bloat: no deliberate compaction</strong>
+<p class="finding-rec">建议: compact/reset context deliberately at session boundaries instead of silently growing it</p>
+<p class="finding-meta">预估浪费: 11.587430 CNY</p>
+<div class="finding-regs">
+<span class="finding-regs-label">法规依据:</span>
+<ul class="regs-list">
+<li>EU AI Act (2024/1689) — Art. 12: logging — 上下文膨胀可能导致日志记录不完整或成本失控</li>
+<li>网信办《智能体规范应用与创新发展实施意见》(2026-05-08) — 内生安全: 权限管控 — 未受控的上下文增长可能影响系统行为可预测性</li>
+</ul></div>
+<div class="finding-rems">
+<span class="finding-rems-label">修复建议:</span>
+<ul class="rems-list">
+<li><span class="rems-pri" style="background:#fd7e14">MEDIUM</span> <strong>启用会话级上下文压缩策略</strong>
+<br><span class="rems-detail">在网关层配置上下文压缩策略：当会话 token 超过阈值（如 64K）时自动触发压缩，保留关键信息</span>
+</li>
+<li><span class="rems-pri" style="background:#fd7e14">MEDIUM</span> <strong>设置单会话 token 上限</strong>
+<br><span class="rems-detail">在网关层设置单会话 token 硬上限（如 128K），超限时拒绝新请求并提示用户重置会话</span>
+</li>
+</ul></div>
+</div>
+<div class="finding" style="border-left:4px solid #dc3545;background:#fff5f5"><span class="finding-sev" style="background:#dc3545">HIGH</span><strong>session-level context bloat: no deliberate compaction</strong>
+<p class="finding-rec">建议: compact/reset context deliberately at session boundaries instead of silently growing it</p>
+<p class="finding-meta">预估浪费: 11.473457 CNY</p>
+<div class="finding-regs">
+<span class="finding-regs-label">法规依据:</span>
+<ul class="regs-list">
+<li>EU AI Act (2024/1689) — Art. 12: logging — 上下文膨胀可能导致日志记录不完整或成本失控</li>
+<li>网信办《智能体规范应用与创新发展实施意见》(2026-05-08) — 内生安全: 权限管控 — 未受控的上下文增长可能影响系统行为可预测性</li>
+</ul></div>
+<div class="finding-rems">
+<span class="finding-rems-label">修复建议:</span>
+<ul class="rems-list">
+<li><span class="rems-pri" style="background:#fd7e14">MEDIUM</span> <strong>启用会话级上下文压缩策略</strong>
+<br><span class="rems-detail">在网关层配置上下文压缩策略：当会话 token 超过阈值（如 64K）时自动触发压缩，保留关键信息</span>
+</li>
+<li><span class="rems-pri" style="background:#fd7e14">MEDIUM</span> <strong>设置单会话 token 上限</strong>
+<br><span class="rems-detail">在网关层设置单会话 token 硬上限（如 128K），超限时拒绝新请求并提示用户重置会话</span>
+</li>
+</ul></div>
+</div>
+<div class="finding" style="border-left:4px solid #dc3545;background:#fff5f5"><span class="finding-sev" style="background:#dc3545">HIGH</span><strong>session-level context bloat: no deliberate compaction</strong>
+<p class="finding-rec">建议: compact/reset context deliberately at session boundaries instead of silently growing it</p>
+<p class="finding-meta">预估浪费: 11.243112 CNY</p>
+<div class="finding-regs">
+<span class="finding-regs-label">法规依据:</span>
+<ul class="regs-list">
+<li>EU AI Act (2024/1689) — Art. 12: logging — 上下文膨胀可能导致日志记录不完整或成本失控</li>
+<li>网信办《智能体规范应用与创新发展实施意见》(2026-05-08) — 内生安全: 权限管控 — 未受控的上下文增长可能影响系统行为可预测性</li>
+</ul></div>
+<div class="finding-rems">
+<span class="finding-rems-label">修复建议:</span>
+<ul class="rems-list">
+<li><span class="rems-pri" style="background:#fd7e14">MEDIUM</span> <strong>启用会话级上下文压缩策略</strong>
+<br><span class="rems-detail">在网关层配置上下文压缩策略：当会话 token 超过阈值（如 64K）时自动触发压缩，保留关键信息</span>
+</li>
+<li><span class="rems-pri" style="background:#fd7e14">MEDIUM</span> <strong>设置单会话 token 上限</strong>
+<br><span class="rems-detail">在网关层设置单会话 token 硬上限（如 128K），超限时拒绝新请求并提示用户重置会话</span>
+</li>
+</ul></div>
+</div></div><div class="section" id="layer-shadow"><h2>5. 影子智能体检测</h2><div class="bypass-banner" style="background:#fd7e14">*** 检测到 4 个影子智能体相关发现 ***</div><div class="metrics-bar"><span>摘要: <strong>4 shadow agent findings</strong></span><span>发现数: <strong>4</strong></span></div><h3>影子智能体发现</h3><div class="finding" style="border-left:4px solid #dc3545;background:#fff5f5"><span class="finding-sev" style="background:#dc3545">HIGH</span><strong>SHADOW_AGENT_DETECTED</strong>
+<p class="finding-detail">Unregistered agent &#x27;user:unknown&#x27; appeared in event &#x27;hermes-evt-001&#x27; of type &#x27;user_message_arrived&#x27;. This may indicate an unauthorized agent operating in the system.</p>
+<p class="finding-rec">建议: agent &#x27;user:unknown&#x27; is not in the registered known_agents whitelist; register it or investigate this activity</p>
+<div class="finding-regs">
+<span class="finding-regs-label">法规依据:</span>
+<ul class="regs-list">
+<li>网信办《智能体规范应用与创新发展实施意见》(2026-05-08) — 影子智能体: 内部发现与管控 — 要求对未授权部署/使用 AI 智能体进行内部发现和管控</li>
+<li>EU AI Act (2024/1689) — Recital 99/100: 多 Agent 链中每个执行高风险功能的 Agent 都受义务约束；未登记 Agent 应被识别</li>
+</ul></div>
+<div class="finding-rems">
+<span class="finding-rems-label">修复建议:</span>
+<ul class="rems-list">
+<li><span class="rems-pri" style="background:#dc3545">HIGH</span> <strong>将未登记 Agent 加入白名单并注册身份</strong>
+<br><span class="rems-detail">在 config.py 的 KNOWN_AGENTS 中补充该 Agent 标识；若为恶意 Agent，立即封禁并排查其操作历史</span>
+</li>
+<li><span class="rems-pri" style="background:#dc3545">HIGH</span> <strong>在网关层增加 Agent 身份校验</strong>
+<br><span class="rems-detail">在 Hermes Gateway 路由层对每个 Agent 请求校验来源身份，未注册者拒绝连接</span>
+</li>
+</ul></div>
+</div>
+<div class="finding" style="border-left:4px solid #dc3545;background:#fff5f5"><span class="finding-sev" style="background:#dc3545">HIGH</span><strong>SHADOW_AGENT_DETECTED</strong>
+<p class="finding-detail">Unregistered agent &#x27;hermes:gateway:log&#x27; appeared in event &#x27;hermes-evt-195&#x27; of type &#x27;session_event&#x27;. This may indicate an unauthorized agent operating in the system.</p>
+<p class="finding-rec">建议: agent &#x27;hermes:gateway:log&#x27; is not in the registered known_agents whitelist; register it or investigate this activity</p>
+<div class="finding-regs">
+<span class="finding-regs-label">法规依据:</span>
+<ul class="regs-list">
+<li>网信办《智能体规范应用与创新发展实施意见》(2026-05-08) — 影子智能体: 内部发现与管控 — 要求对未授权部署/使用 AI 智能体进行内部发现和管控</li>
+<li>EU AI Act (2024/1689) — Recital 99/100: 多 Agent 链中每个执行高风险功能的 Agent 都受义务约束；未登记 Agent 应被识别</li>
+</ul></div>
+<div class="finding-rems">
+<span class="finding-rems-label">修复建议:</span>
+<ul class="rems-list">
+<li><span class="rems-pri" style="background:#dc3545">HIGH</span> <strong>将未登记 Agent 加入白名单并注册身份</strong>
+<br><span class="rems-detail">在 config.py 的 KNOWN_AGENTS 中补充该 Agent 标识；若为恶意 Agent，立即封禁并排查其操作历史</span>
+</li>
+<li><span class="rems-pri" style="background:#dc3545">HIGH</span> <strong>在网关层增加 Agent 身份校验</strong>
+<br><span class="rems-detail">在 Hermes Gateway 路由层对每个 Agent 请求校验来源身份，未注册者拒绝连接</span>
+</li>
+</ul></div>
+</div>
+<div class="finding" style="border-left:4px solid #dc3545;background:#fff5f5"><span class="finding-sev" style="background:#dc3545">HIGH</span><strong>SHADOW_AGENT_DETECTED</strong>
+<p class="finding-detail">Unregistered agent &#x27;user:guest_001&#x27; appeared in event &#x27;hermes-evt-358&#x27; of type &#x27;user_message_arrived&#x27;. This may indicate an unauthorized agent operating in the system.</p>
+<p class="finding-rec">建议: agent &#x27;user:guest_001&#x27; is not in the registered known_agents whitelist; register it or investigate this activity</p>
+<div class="finding-regs">
+<span class="finding-regs-label">法规依据:</span>
+<ul class="regs-list">
+<li>网信办《智能体规范应用与创新发展实施意见》(2026-05-08) — 影子智能体: 内部发现与管控 — 要求对未授权部署/使用 AI 智能体进行内部发现和管控</li>
+<li>EU AI Act (2024/1689) — Recital 99/100: 多 Agent 链中每个执行高风险功能的 Agent 都受义务约束；未登记 Agent 应被识别</li>
+</ul></div>
+<div class="finding-rems">
+<span class="finding-rems-label">修复建议:</span>
+<ul class="rems-list">
+<li><span class="rems-pri" style="background:#dc3545">HIGH</span> <strong>将未登记 Agent 加入白名单并注册身份</strong>
+<br><span class="rems-detail">在 config.py 的 KNOWN_AGENTS 中补充该 Agent 标识；若为恶意 Agent，立即封禁并排查其操作历史</span>
+</li>
+<li><span class="rems-pri" style="background:#dc3545">HIGH</span> <strong>在网关层增加 Agent 身份校验</strong>
+<br><span class="rems-detail">在 Hermes Gateway 路由层对每个 Agent 请求校验来源身份，未注册者拒绝连接</span>
+</li>
+</ul></div>
+</div>
+<div class="finding" style="border-left:4px solid #0d6efd;background:#f0f6ff"><span class="finding-sev" style="background:#0d6efd">INFO</span><strong>AUDIT_GAP_NO_APPROVAL_STREAM</strong>
+<p class="finding-detail">No approval-type event was found in this event stream, so unauthorized tool call verification is skipped to avoid false positives. Connect an approval/audit stream to enable this check.</p>
+<p class="finding-rec">建议: event stream contains no approval events; enable approval logging or attach an approval trail before treating dangerous tool calls as authorized</p>
+<div class="finding-regs">
+<span class="finding-regs-label">法规依据:</span>
+<ul class="regs-list">
+<li>网信办《智能体规范应用与创新发展实施意见》(2026-05-08) — 行为管控: 操作留痕 — 智能体行为可验证、可追溯；审批流缺失导致审计无法完成</li>
+<li>EU AI Act (2024/1689) — Art. 12: logging — 高风险 AI 系统须自动记录事件日志，审批流属于必要日志范畴</li>
+</ul></div>
+<div class="finding-rems">
+<span class="finding-rems-label">修复建议:</span>
+<ul class="rems-list">
+<li><span class="rems-pri" style="background:#dc3545">HIGH</span> <strong>补全审批流日志记录</strong>
+<br><span class="rems-detail">在网关层确保每次工具调用/任务派发/决策执行均写入 approval 事件，包含审批人、时间、结果</span>
+</li>
+<li><span class="rems-pri" style="background:#fd7e14">MEDIUM</span> <strong>启用审计日志完整性校验</strong>
+<br><span class="rems-detail">在每次审计前自动检查审批流覆盖度，缺失率 &gt; 5% 时触发告警</span>
+</li>
+</ul></div>
+</div></div><div class="section" id="layer-compliance"><h2>6. 决策权限合规</h2><div class="metrics-bar"><span>摘要: <strong>no findings</strong></span><span>发现数: <strong>0</strong></span></div><h3>合规发现</h3><p class='nodata'>无发现项</p></div><div class="section" id="layer-compliance-mapping"><h2>7. 合规条款映射</h2><div class="metrics-bar"><span>引用的法规条款: <strong>12</strong></span><span>主要法规: 网信办《实施意见》(2026-05-08) / EU AI Act (2024/1689) / 《拟人化互动办法》(2026-07-15)</span></div><p style="font-size:12px;color:#888;margin-bottom:12px">以下为本次审计发现涉及的所有法规条款汇总。每条发现均已标注对应的法规依据。</p><table><thead><tr><th>法规文件</th><th>条款</th><th>要求</th></tr></thead><tbody><tr><td>网信办《智能体规范应用与创新发展实施意见》(2026-05-08)</td><td>内生安全</td><td>工具调用安全 — 大输出注入未治理可能导致上下文污染和安全隐患</td></tr><tr><td>《人工智能拟人化互动服务管理暂行办法》(2026-07-15)</td><td>互动留痕</td><td>内容安全 — 工具输出未截断可能引入不安全内容</td></tr><tr><td>网信办《智能体规范应用与创新发展实施意见》(2026-05-08)</td><td>内生安全</td><td>工具调用安全 — 重复调用同一高输出工具未治理，存在资源浪费和安全隐患</td></tr><tr><td>EU AI Act (2024/1689)</td><td>Art. 12</td><td>logging — 上下文膨胀可能导致日志记录不完整或成本失控</td></tr><tr><td>网信办《智能体规范应用与创新发展实施意见》(2026-05-08)</td><td>内生安全</td><td>权限管控 — 未受控的上下文增长可能影响系统行为可预测性</td></tr><tr><td>网信办《智能体规范应用与创新发展实施意见》(2026-05-08)</td><td>内生安全</td><td>工具调用安全 — 低效循环调用未治理，存在资源浪费和安全隐患</td></tr><tr><td>网信办《智能体规范应用与创新发展实施意见》(2026-05-08)</td><td>内生安全</td><td>权限管控 — 应设置各 Agent 的资源使用上限，防止资源滥用</td></tr><tr><td>unknown</td><td>—</td><td>manual review required — 成本估算准确性不直接对应法规条款，属于审计最佳实践</td></tr><tr><td>网信办《智能体规范应用与创新发展实施意见》(2026-05-08)</td><td>影子智能体</td><td>内部发现与管控 — 要求对未授权部署/使用 AI 智能体进行内部发现和管控</td></tr><tr><td>EU AI Act (2024/1689)</td><td>Recital 99/100</td><td>多 Agent 链中每个执行高风险功能的 Agent 都受义务约束；未登记 Agent 应被识别</td></tr><tr><td>网信办《智能体规范应用与创新发展实施意见》(2026-05-08)</td><td>行为管控</td><td>操作留痕 — 智能体行为可验证、可追溯；审批流缺失导致审计无法完成</td></tr><tr><td>EU AI Act (2024/1689)</td><td>Art. 12</td><td>logging — 高风险 AI 系统须自动记录事件日志，审批流属于必要日志范畴</td></tr></tbody></table></div><div class="section" id="layer-remediation-priority"><h2>8. 修复优先级</h2><div class="metrics-bar"><span>High 优先级修复: <strong>3</strong></span><span>Medium 优先级修复: <strong>18</strong></span><span>Low 优先级修复: <strong>14</strong></span></div><h3>High 优先级 (3)</h3><ul class="prio-list"><li>AUDIT_GAP_NO_APPROVAL_STREAM</li><li>SHADOW_AGENT_DETECTED</li><li>large-output tool injection ungoverned</li></ul><h3>Medium 优先级 (18)</h3><ul class="prio-list"><li>AUDIT_GAP_NO_APPROVAL_STREAM</li><li>cost-model gaps: no unit price in event stream — prices are estimates</li><li>inefficient loop: rapid repeated calls to browser_navigate</li><li>inefficient loop: rapid repeated calls to memory</li><li>inefficient loop: rapid repeated calls to session_search</li><li>inefficient loop: rapid repeated calls to skill_view</li><li>large-output tool injection ungoverned</li><li>no per-agent token caps observed</li><li>repeated calls to same high-output tool: browser_navigate</li><li>repeated calls to same high-output tool: browser_snapshot</li><li>repeated calls to same high-output tool: memory</li><li>repeated calls to same high-output tool: patch</li><li>repeated calls to same high-output tool: read_file</li><li>repeated calls to same high-output tool: search_files</li><li>repeated calls to same high-output tool: session_search</li><li>repeated calls to same high-output tool: skill_view</li><li>repeated calls to same high-output tool: terminal</li><li>session-level context bloat: no deliberate compaction</li></ul><h3>Low 优先级 (14)</h3><ul class="prio-list"><li>inefficient loop: rapid repeated calls to browser_navigate</li><li>inefficient loop: rapid repeated calls to memory</li><li>inefficient loop: rapid repeated calls to session_search</li><li>inefficient loop: rapid repeated calls to skill_view</li><li>no per-agent token caps observed</li><li>repeated calls to same high-output tool: browser_navigate</li><li>repeated calls to same high-output tool: browser_snapshot</li><li>repeated calls to same high-output tool: memory</li><li>repeated calls to same high-output tool: patch</li><li>repeated calls to same high-output tool: read_file</li><li>repeated calls to same high-output tool: search_files</li><li>repeated calls to same high-output tool: session_search</li><li>repeated calls to same high-output tool: skill_view</li><li>repeated calls to same high-output tool: terminal</li></ul></div><div class="footer"><p>本报告由 agentlens-cli 自动生成 — 2026-09-09 03:03:54 UTC</p><p class="disclaimer">免责声明：本报告基于输入事件流自动分析生成，仅供审计参考，不构成法律或合规建议。所有成本数据均为估算值。</p></div></div>
+</body>
+</html>
