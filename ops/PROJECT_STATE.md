@@ -23,7 +23,7 @@
 - 扩展功能（2026-09-08/09 全部完成并验真）：
   - **N1 报告防篡改**：integrity.py，SHA-256 文档哈希 + 哈希链，verify 子命令验真（篡改 exit 1）
   - **N3 合规条款映射**：regulations.py，439 findings 映射网信办《实施意见》/EU AI Act/拟人化办法，HTML 第 7 节汇总表
-  - **N2 MCP server**：mcp_server.py，FastMCP 4 工具（audit/cost_analysis/verify_report/list_regulations），stdio + streamable-http 双传输，0.2.1[mcp] 全新环境实测注册成功
+  - **N2 MCP server**：mcp_server.py，FastMCP 4 工具（audit/cost_analysis/verify_report/list_regulations），stdio + streamable-http 双传输，0.2.1[mcp] 全新环境实测注册成功；**2026-09-10 扩到 7 工具**（+watchdog_status/remediation_lookup/fix_tracking_status，723ffae）
   - **watchdog 持续审计**：watchdog.py，建基线→定期复检→发现「新增问题漂移」，退出码 0/1/2 报警语义，cron 可调度（含「已有 high 数量增长」漏报修复）
   - **remediation 修复建议**：remediation.py，每类 finding 配具体修复建议（action+detail+priority），439 findings 全覆盖；HTML 每条 finding 加修复建议区块 + 第 8 节修复优先级汇总
   - **报告仪表盘**（2026-09-09）：report.py 顶部「一页速览」——6 KPI 卡（发现总数/预估浪费/影子/审批绕过/可避免占比/闭环率）+ 3 张 ECharts 图（严重度分布环形图/Top10 浪费条形图/Agent 成本+Token 双轴图），ECharts CDN + 三重 resize 兜底 + 动画禁用（静态全貌）
@@ -32,7 +32,12 @@
 - **P1 优化批**（2026-09-09，8233af4）：`/reports/compare?base=X&curr=Y` 报告对比页（新增/已修复/持续存在 + 汇总卡 + 浪费变化箭头 + 400/404 守卫）；`/api/reports/{date}/findings.csv` CSV 全量导出（UTF-8-sig Excel 兼容、按 layer+title 聚合、出现次数列）；report.py 内嵌完整 findings-data JSON（436 条，解决「报告只渲染 Top-10 导致 CSV 丢 426 条」）
 - **P2 优化批**（2026-09-09，1deb257）：修复跟踪闭环（/api/findings/status + mark-fixed + 审计 run 后自动复检 reopened/closed + fixed-findings.json 持久化 + UI 区块）；多项目/多环境（报告目录 <project>/ 子目录 + /api/projects + project 参数，兼容旧数据回退根目录）；通知渠道配置化（notify.py feishu/webhook/command 三通道 + notify-config.json 600 + 无配置回退 hermes send）
 - 文档：README（含 verify/regs/remediations/watchdog，测试数 60→120）+ README.en.md（英文对外版）+ docs/example-report.html（真实样例报告，integrity VERIFIED）
-- 测试：tests/ pytest **172 用例全绿**（公共 venv /home/agentuser/.hermes/hermes-agent/venv/bin/python -m pytest tests/ -q）
+- 测试：tests/ pytest **216 用例全绿**（公共 venv /home/agentuser/.hermes/hermes-agent/venv/bin/python -m pytest tests/ -q）
+- **2026-09-10 四批优化**（任务1-4 串行完成）：
+  - **任务1 OWASP 合规映射**（de6076c）：regulations.py 扩展 3 框架——OWASP LLM Top 10 2026（LLM01-10，含改名 LLM08 Hidden Context Exposure）+ OWASP Agentic Top 10（ASI01-10）+ ACS 2026；OWASP_TITLE_OVERRIDES 精确映射 + OWASP_LAYER_FALLBACK 按层兜底（map_finding 加 layer 参数）；report.py 第 7 节新增 **OWASP 覆盖矩阵**（条目→命中数），metrics-bar 更新为 4 类法规
+  - **任务2 系统提示泄露检测**（00ac99b）：leakage.py——内容级检测（强标记单命中/弱标记≥2 → high SYSTEM_PROMPT_LEAKAGE_SUSPECTED，OWASP LLM08）+ 元数据级超大输出弱信号（info LARGE_OUTPUT_CONTEXT_EXPOSURE_SUSPECTED）；**脱敏纪律**：Hermes 事件流无正文（转换器脱敏）→ 默认只出 info 弱信号不误报；集成 audit + diff 两路径（并入 compliance 层）+ regulations/remediation 双映射
+  - **任务3 修复回归验证**（0655414+UI）：_recheck_fixed_findings 状态机——连续 VERIFY_STREAK_REQUIRED(3) 次审计缺席才 closed+verified，期间再次出现（含 closed 后）→ reopened+regressed；条目带 absent_streak + recheck_history；新 API /api/findings/verification + 修复跟踪页徽章（✓已验证/回归/验证中 N/3）+ 验证历史列
+  - **任务4 成本预算告警**（c0b3e0a）：budget.py——check_budget 检查总成本/预估浪费超阈值（notify-config.json 的 budget 字段，默认关闭零侵入）；集成 web.py audit run（报告后解析 cost → 超阈值 send_notify，task_entry 记 budget_alert）；webhook 本地监听端到端验证通过
 
 ## 关键事实（避免重踩）
 - **PyPI 包名 `agentlens-cli` 已被他人占用**（发布 403）→ 改名 `agentlens-audit`（2026-09-08 实测 404 可用后发布）
@@ -59,11 +64,12 @@
 | agentlens-web.service | `serve --host 0.0.0.0 --port 8010`，Web 仪表盘 + 报告查看 + 触发审计 API；**Basic Auth**（admin + 随机密码，凭据文件 ~/.hermes/agentlens-web-cred 600，EnvironmentFile 注入） | enabled + active |
 - 报告目录：`~/.hermes/agentlens-reports/`（audit-YYYYMMDD.html + baseline.json）
 - 转换器：scripts/convert_gateway_log.py（丢弃 msg 原文、用户 ID→user:unknown）；调度：scripts/run_daily_audit.sh（DAYS=1，漂移分支 hermes send -t feishu）
-- 端口：liuyao 8000 / agentlens-web 8010 / agentlens-mcp 8765 / hermes-stats 3001 / **gh-accel 8123**
+- 端口：liuyao 8000 / agentlens-web 8010 / hermes-stats 3001 / **gh-accel 8123**（agentlens-mcp 8765 未常驻，stdio 按需拉起或 `--transport http` 手动）
 - **gh-accel GitHub 自动加速代理**（2026-09-10 部署，借鉴 CrawlEyes 多镜像兜底链）：systemd user `gh-accel.service`，127.0.0.1:8123，代码 `~/.hermes/gh-accel/gh_accel.py`。git 全局 insteadOf（真实 home .gitconfig 为主 + profile include）→ 直连优先，失败自动切 gh-proxy.com→ghproxy.site；push 走代理直连（凭证 ~/.git-credentials 的 127.0.0.1:8123 条目）；raw 固定走镜像（IPv6-only 黑洞）。真实 push 验证通过。运维文档：`~/.hermes/gh-accel/README.md`
 
 ## 待办
 - [x] P0/P1/P2 持续优化批（2026-09-09 全部完成：聚合去重/筛选折叠/剥离 iframe/任务持久化 + 对比页/CSV + 修复跟踪闭环/多项目/通知配置化）
+- [x] 2026-09-10 四批优化（任务1 OWASP 合规 / 任务2 泄露检测 / 任务3 修复回归验证 / 任务4 预算告警）+ 方向B（MCP 7 工具 + 报告页修复跟踪入口）
 - [ ] GitHub git 历史 push（**gh-accel 通道已就绪 2026-09-10**：`git remote add origin https://github.com/waiky-github/agentlens-cli.git && git push -u origin main`，直连恢复即可推，无需代理；大历史 push 建议选网络稳定时段）
 - [ ] 版本 0.3.0（watchdog/remediation 已入 0.2.1，Web 服务 + P0/P1/P2 优化待发版；视用户/市场反馈迭代）
 - [ ] 销售材料（用户已认可方向：先功能后宣传，功能开发完成后再做 BD）
@@ -78,3 +84,4 @@
 - 2026-09-09：报告仪表盘 + Web 服务（e3eba58）——ECharts 一页速览 + serve 完整 API/操作界面，139/139 测试全绿，systemd agentlens-web 常驻 8010 端口
 - 2026-09-09：P0（2a689e1）+ P1（8233af4）+ P2（1deb257）三批持续优化全部完成并验真——修复跟踪闭环 / 多项目 / 通知配置化 / 对比页 / CSV 全量导出；172/172 测试全绿，正式服务 8010 已加载
 - 2026-09-10：gh-accel GitHub 自动加速代理部署（借鉴 CrawlEyes 多镜像兜底链）——git 全局 insteadOf → 127.0.0.1:8123 代理，直连优先/失败自动切 gh-proxy→ghproxy.site，push 走代理直连，真实 push 端到端验证通过；GitHub git 历史 push 通道就此就绪
+- 2026-09-10：**四批持续优化**（1→4 串行，全部验真）——① OWASP LLM Top 10 2026/Agentic Top 10/ACS 合规映射（de6076c）+ ② 系统提示泄露检测（00ac99b）+ ③ 修复回归验证状态机 + /api/findings/verification（0655414）+ ④ 成本预算告警（c0b3e0a）；216/216 测试全绿；**方向B 收尾**（723ffae）MCP 工具 4→7 + 报告详情页修复跟踪入口
