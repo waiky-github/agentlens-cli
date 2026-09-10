@@ -22,7 +22,10 @@ import json
 import os
 from pathlib import Path
 
-from mcp.server.mcpserver import MCPServer
+try:
+    from mcp.server.fastmcp import FastMCP  # mcp SDK 1.x
+except ImportError:  # pragma: no cover - mcp 2.x renamed FastMCP -> MCPServer
+    from mcp.server.mcpserver import MCPServer as FastMCP  # type: ignore[assignment]  # mcp SDK 2.x
 
 from .__main__ import _load_events, _run_audit_for_diff
 from .attribution import attribute_costs
@@ -32,7 +35,7 @@ from .integrity import build_integrity_block, verify_report as _verify_report
 from .regulations import list_regulations as _list_regulations
 from .remediation import _lookup_remediations
 
-mcp = MCPServer("agentlens-audit")
+mcp = FastMCP("agentlens-audit")
 
 
 @mcp.tool()
