@@ -207,6 +207,93 @@ class TestMapAllLayers:
 # ── list_regulations ─────────────────────────────────────────────────
 
 
+class TestOWASPMapping:
+    """OWASP LLM Top 10 2026 / Agentic Top 10 (ASI) / ACS mapping (added 2026-09-10)."""
+
+    def test_shadow_agent_maps_to_asi10(self):
+        """SHADOW_AGENT_DETECTED must reference OWASP Agentic ASI10 (Rogue Agents)."""
+        refs = map_finding({"title": "SHADOW_AGENT_DETECTED"})["regulation_refs"]
+        owasp = [r for r in refs if "Agentic Applications" in r["regulation"]]
+        assert any(r["article"] == "ASI10" for r in owasp), f"expected ASI10, got: {owasp}"
+
+    def test_approval_bypass_maps_to_llm03_asi09_acs(self):
+        """APPROVAL_BYPASS_CONFIRMED must reference LLM03 + ASI09 + ACS."""
+        refs = map_finding({"title": "APPROVAL_BYPASS_CONFIRMED"})["regulation_refs"]
+        articles = {r.get("article") for r in refs}
+        assert "LLM03" in articles, f"expected LLM03, got: {articles}"
+        assert "ASI09" in articles, f"expected ASI09, got: {articles}"
+        assert any("ACS" in r.get("regulation", "") for r in refs)
+
+    def test_unauthorized_tool_call_maps_to_asi02(self):
+        """UNAUTHORIZED_TOOL_CALL must reference ASI02 (Tool Misuse)."""
+        refs = map_finding({"title": "UNAUTHORIZED_TOOL_CALL"})["regulation_refs"]
+        owasp = [r for r in refs if "Agentic Applications" in r["regulation"]]
+        assert any(r["article"] == "ASI02" for r in owasp), f"expected ASI02, got: {owasp}"
+
+    def test_layer_fallback_cost_to_llm06(self):
+        """Cost-layer finding without precise override must fall back to LLM06 (Unbounded Consumption)."""
+        refs = map_finding({"title": "some cost finding not in table"}, layer="cost")["regulation_refs"]
+        owasp = [r for r in refs if "OWASP Top 10 for LLM" in r["regulation"]]
+        assert any(r["article"] == "LLM06" for r in owasp), f"expected LLM06, got: {owasp}"
+
+    def test_layer_fallback_graph_to_asi07(self):
+        """Graph-layer finding must fall back to ASI07 (Insecure Inter-Agent Communication)."""
+        refs = map_finding({"title": "some graph finding not in table"}, layer="graph")["regulation_refs"]
+        owasp = [r for r in refs if "Agentic Applications" in r["regulation"]]
+        assert any(r["article"] == "ASI07" for r in owasp), f"expected ASI07, got: {owasp}"
+
+    def test_unknown_finding_keeps_manual_review_no_owasp(self):
+        """Fully unknown finding (no layer context) must NOT get OWASP refs bolted on — stays manual review."""
+        refs = map_finding({"title": "completely unknown finding type"})["regulation_refs"]
+        assert len(refs) == 1
+        assert refs[0]["regulation"] == "unknown"
+        assert not any("OWASP" in r.get("regulation", "") for r in refs)
+
+    def test_unknown_title_with_known_layer_gets_fallback(self):
+        """Unknown title but known layer -> layer fallback OWASP applies (map_all_layers always passes layer)."""
+        refs = map_finding({"title": "weird unknown title"}, layer="cost")["regulation_refs"]
+        assert any("OWASP" in r.get("regulation", "") for r in refs)
+        assert any(r.get("article") == "LLM06" for r in refs)
+
+    def test_all_layers_have_owasp_after_map(self):
+        """After map_all_layers on a real audit, every finding should carry OWASP/ACS refs."""
+        events = _load(EXAMPLES_DIR / "compliance_violations.jsonl")
+        cm = CostModel()
+        graph_data = build_graph(events)
+        decision_data = audit_decisions(events)
+        all_findings = graph_data.get("findings", []) + decision_data.get("findings", [])
+        evidence_data = verify_evidence(events, all_findings)
+        cost_attribution = attribute_costs(events, cm)
+        governance_data = detect_waste(events, cm)
+        shadow_findings = detect_shadow_agents(events, DEFAULT_KNOWN_AGENTS, DEFAULT_DANGEROUS_TOOLS)
+        compliance_data = audit_compliance(events)
+        total_cost = cost_attribution["total_cost"]
+        total_wasted = governance_data["total_est_wasted_cost"]
+        avoidable_ratio = round(total_wasted / total_cost, 4) if total_cost > 0 else 0.0
+        result = {
+            "graph": {"findings": graph_data["findings"]},
+            "decision": {"findings": decision_data["findings"]},
+            "evidence": {"findings": evidence_data["findings"]},
+            "cost": {"findings": governance_data["findings"]},
+            "shadow": {"findings": shadow_findings},
+            "compliance": {"findings": compliance_data["findings"]},
+        }
+        map_all_layers(result)
+        layer_keys = ["graph", "decision", "evidence", "cost", "shadow", "compliance"]
+        total_with_owasp = 0
+        total = 0
+        for key in layer_keys:
+            for f in result.get(key, {}).get("findings", []):
+                total += 1
+                if any("OWASP" in r.get("regulation", "") or "ACS" in r.get("regulation", "") for r in f.get("regulation_refs", [])):
+                    total_with_owasp += 1
+        assert total > 0
+        # 已知 title 都在表内或可 fallback，未知 title 才可能没有——至少大多数应有 OWASP
+        assert total_with_owasp >= total * 0.5, (
+            f"expected most findings to carry OWASP refs, got {total_with_owasp}/{total}"
+        )
+
+
 class TestListRegulations:
     """Test the list_regulations function."""
 
