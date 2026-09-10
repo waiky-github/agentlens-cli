@@ -1323,6 +1323,7 @@ def _build_report_detail(date: str) -> HTMLResponse:
     date_formatted = f"{date[:4]}-{date[4:6]}-{date[6:8]}"
     topbar_extra = (
         f'<span style="font-size:13px;color:var(--text-secondary)">{date_formatted}</span>'
+        f'<a href="/fix-track" class="btn btn-ghost btn-sm">修复跟踪</a>'
         f'<a href="/api/reports/{date}/findings.csv" class="btn btn-ghost btn-sm">导出 CSV</a>'
         f'<a href="/api/reports/{date}/html" class="btn btn-ghost btn-sm">原始 HTML</a>'
         f'<a href="/reports" class="btn btn-primary btn-sm">返回列表</a>'
