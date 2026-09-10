@@ -860,11 +860,118 @@ def build_cmd_regs(subparsers):
         "--title", default=None,
         help="Filter mappings by finding title (substring match)",
     )
+    p.add_argument(
+        "--unknown", action="store_true",
+        help="从审计报告 HTML 提取未匹配法规的 finding 并聚合（人工标注清单）",
+    )
+    p.add_argument(
+        "--report", default=None,
+        help="审计报告 HTML 路径（--unknown 时必填）",
+    )
+    p.add_argument(
+        "--annotate", nargs="+", metavar="ARG",
+        help="人工标注: regs --annotate \"TITLE\" \"REGULATION\" [\"ARTICLE\"] [--note N]",
+    )
+    p.add_argument(
+        "--note", default="manual annotation",
+        help="标注备注（--annotate 时可选）",
+    )
+    p.add_argument(
+        "--annotations", action="store_true",
+        help="列出全部人工标注",
+    )
     p.set_defaults(func=cmd_regs)
+
+
+def _extract_unknown_titles_from_report(report_path) -> dict[str, dict]:
+    """从审计报告 HTML 提取未映射法规的 finding 并聚合（人工标注清单）。
+
+    Returns: {title: {"count": int, "layers": set[str]}}
+    """
+    import json as _json
+    import re as _re
+    from pathlib import Path as _Path
+
+    from agentlens_cli.regulations import _lookup_regulations
+
+    report_path = _Path(report_path)
+    if not report_path.is_file():
+        raise FileNotFoundError(f"报告不存在: {report_path}")
+    html = report_path.read_text(encoding="utf-8")
+    m = _re.search(r'<script id="findings-data" type="application/json">(.*?)</script>', html, _re.S)
+    if not m:
+        raise ValueError("报告内未找到 findings-data（可能不是 audit 生成的 HTML）")
+    findings = _json.loads(m.group(1).replace("<\\/", "</"))
+    agg: dict[str, dict] = {}
+    for f in findings:
+        title = f.get("title", "?")
+        # 实时判断（结合人工标注），不信任报告内嵌的固化 refs —— 标注后重跑立即生效
+        refs = _lookup_regulations(title)
+        if refs and all(r.get("regulation") == "unknown" for r in refs):
+            layer = f.get("layer", "?")
+            entry = agg.setdefault(title, {"count": 0, "layers": set()})
+            entry["count"] += 1
+            entry["layers"].add(layer)
+    return agg
 
 
 def cmd_regs(args):
     """Execute the `regs` subcommand."""
+    from agentlens_cli.regulations import (
+        add_annotation,
+        list_annotations,
+        list_regulations,
+    )
+
+    # ── 人工标注写入 ──────────────────────────────────────────────
+    if args.annotate:
+        parts = list(args.annotate)
+        if len(parts) < 2:
+            print("用法: regs --annotate \"TITLE\" \"REGULATION\" [\"ARTICLE\"] [--note N]", file=sys.stderr)
+            sys.exit(2)
+        title, regulation = parts[0], parts[1]
+        article = parts[2] if len(parts) > 2 else ""
+        refs = add_annotation(title, regulation, article, args.note)
+        print(f"已标注: {title}")
+        for ref in refs:
+            print(f"  {ref['regulation']} | {ref['article']} | {ref['note']}")
+        return
+
+    # ── 列出人工标注 ──────────────────────────────────────────────
+    if args.annotations:
+        annotations = list_annotations()
+        if not annotations:
+            print("无人工标注。", file=sys.stderr)
+            sys.exit(0)
+        for title, refs in sorted(annotations.items()):
+            print(f"\n--- {title} ---")
+            for ref in refs:
+                print(f"  {ref.get('regulation','')} | {ref.get('article','')} | {ref.get('note','')}")
+        return
+
+    # ── unknown 聚合（从报告 HTML 提取） ────────────────────────────
+    if args.unknown:
+        if not args.report:
+            print("用法: regs --unknown --report <audit-XXXX.html>", file=sys.stderr)
+            sys.exit(2)
+        from pathlib import Path as _Path
+
+        try:
+            agg = _extract_unknown_titles_from_report(_Path(args.report))
+        except (FileNotFoundError, ValueError) as exc:
+            print(str(exc), file=sys.stderr)
+            sys.exit(2)
+        if not agg:
+            print("无 unknown finding（全部已映射）。")
+            return
+        print(f"共 {sum(e['count'] for e in agg.values())} 条 finding 未映射法规，涉及 {len(agg)} 个 title：")
+        for title, e in sorted(agg.items(), key=lambda kv: -kv[1]["count"]):
+            layers = "/".join(sorted(e["layers"]))
+            print(f"  x{e['count']:<4} [{layers}] {title}")
+        print("\n提示: regs --annotate \"TITLE\" \"REGULATION\" [\"ARTICLE\"] 可人工标注后重跑审计。")
+        return
+
+    # ── 默认：列出映射 ────────────────────────────────────────────
     entries = list_regulations(args.title)
     if not entries:
         print("No regulation mappings found.", file=sys.stderr)

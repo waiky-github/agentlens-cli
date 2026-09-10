@@ -4,10 +4,18 @@ Primary regulation: 网信办《智能体规范应用与创新发展实施意见
 Secondary regulation: EU AI Act (2024/1689)
 Supplementary: 《人工智能拟人化互动服务管理暂行办法》(2026-07-15)
 International security frameworks (added 2026-09-10):
-    OWASP Top 10 for LLM Applications 2026 (announced 2026-09-02)
-    OWASP Top 10 for Agentic Applications 2026 (ASI01-ASI10)
-    OWASP Agent Control Standard (ACS 2026)
+OWASP Top 10 for LLM Applications 2026 (announced 2026-09-02)
+OWASP Top 10 for Agentic Applications 2026 (ASI01-ASI10)
+OWASP Agent Control Standard (ACS 2026)
+
+Manual annotations (added 2026-09-10): unknown findings 的人工标注覆盖。
+annotations 文件（默认 ~/.hermes/agentlens-reports/annotations.json，env AGENTLENS_ANNOTATIONS 覆盖）
+在 _lookup_regulations 中**优先于**静态表生效，用于把审计时未匹配的 finding title 归入人工判定条款。
 """
+
+import json
+import os
+from pathlib import Path
 
 # ── Regulation definitions ──────────────────────────────────────────
 
@@ -466,8 +474,72 @@ DYNAMIC_REGULATIONS: list[tuple[str, list[dict]]] = [
 ]
 
 
+def _annotations_path() -> Path:
+    """Resolve the manual annotations file path (env AGENTLENS_ANNOTATIONS overrides default)."""
+    env = os.environ.get("AGENTLENS_ANNOTATIONS")
+    if env:
+        return Path(env)
+    return Path(os.path.expanduser("~/.hermes/agentlens-reports/annotations.json"))
+
+
+_annotations_cache: dict[str, list[dict]] | None = None
+
+
+def _load_annotations() -> dict[str, list[dict]]:
+    """Load manual annotations (title -> list of refs). Cached after first read."""
+    global _annotations_cache
+    if _annotations_cache is not None:
+        return _annotations_cache
+    path = _annotations_path()
+    if path.is_file():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            _annotations_cache = data if isinstance(data, dict) else {}
+        except (json.JSONDecodeError, OSError):
+            _annotations_cache = {}
+    else:
+        _annotations_cache = {}
+    return _annotations_cache
+
+
+def _invalidate_annotations_cache() -> None:
+    global _annotations_cache
+    _annotations_cache = None
+
+
+def add_annotation(
+    title: str,
+    regulation: str,
+    article: str = "",
+    note: str = "manual annotation",
+) -> dict:
+    """Add or update a manual regulation annotation for a finding title.
+
+    Writes to the annotations file (incremental; existing entries preserved).
+    Returns the ref list now mapped to the title.
+    """
+    annotations = _load_annotations()
+    ref = {"regulation": regulation, "article": article, "note": note}
+    annotations[title] = [ref]
+    path = _annotations_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(annotations, ensure_ascii=False, indent=2), encoding="utf-8")
+    _invalidate_annotations_cache()
+    return [ref]
+
+
+def list_annotations() -> dict:
+    """Return all manual annotations (title -> refs)."""
+    return dict(_load_annotations())
+
+
 def _lookup_regulations(title: str) -> list[dict]:
     """Look up regulation references for a finding title. Falls back to dynamic patterns."""
+    # Manual annotations take precedence (human judgement overrides automation)
+    annotated = _load_annotations().get(title)
+    if annotated:
+        return annotated
+
     # Exact match first
     if title in REGULATIONS:
         return REGULATIONS[title]
