@@ -541,6 +541,19 @@ def list_annotations() -> dict:
     return dict(_load_annotations())
 
 
+def remove_annotation(title: str) -> bool:
+    """Remove a manual annotation for a title. Returns True if existed and removed."""
+    annotations = _load_annotations()
+    if title not in annotations:
+        return False
+    del annotations[title]
+    path = _annotations_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(annotations, ensure_ascii=False, indent=2), encoding="utf-8")
+    _invalidate_annotations_cache()
+    return True
+
+
 def _lookup_regulations(title: str) -> list[dict]:
     """Look up regulation references for a finding title. Falls back to dynamic patterns."""
     # Manual annotations take precedence (human judgement overrides automation)

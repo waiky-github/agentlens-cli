@@ -184,6 +184,73 @@ class TestApiWatchdog:
         assert "history" in data
         assert "total" in data
 
+    def test_annotations_get_returns_200(self):
+        resp = client.get("/api/annotations")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "annotations" in data
+        assert "findings" in data
+
+    def test_annotations_page_returns_200(self):
+        resp = client.get("/annotate")
+        assert resp.status_code == 200
+        assert "合规标注" in resp.text
+
+    def test_budget_alerts_page_returns_200(self):
+        resp = client.get("/budget-alerts")
+        assert resp.status_code == 200
+        assert "预算告警" in resp.text
+
+    def test_dashboard_has_watchdog_trend(self):
+        resp = client.get("/")
+        assert resp.status_code == 200
+        # W3: 漂移趋势区块（有历史数据时渲染 chart；无数据时渲染 hint）
+        assert "Watchdog 漂移趋势" in resp.text
+        assert "chart-watchdog" in resp.text
+
+    def test_annotations_post_and_delete(self):
+        from agentlens_cli.regulations import _invalidate_annotations_cache
+        import agentlens_cli.regulations as regs
+
+        _invalidate_annotations_cache()
+        # 用临时标注路径避免污染真实 annotations.json
+        import tempfile
+        from pathlib import Path
+        tmp = tempfile.NamedTemporaryFile(suffix=".json", delete=False, mode="w", encoding="utf-8")
+        tmp.write("{}")
+        tmp.close()
+        import os
+        old = os.environ.get("AGENTLENS_ANNOTATIONS")
+        os.environ["AGENTLENS_ANNOTATIONS"] = tmp.name
+        _invalidate_annotations_cache()
+        try:
+            resp = client.post("/api/annotations", json={
+                "title": "WEB_TEST_TITLE",
+                "regulation": "网信办《智能体规范应用与创新发展实施意见》",
+                "article": "测试条款",
+                "note": "web test",
+            })
+            assert resp.status_code == 200
+            assert resp.json()["status"] == "ok"
+
+            # 读取生效
+            refs = regs._lookup_regulations("WEB_TEST_TITLE")
+            assert refs[0]["regulation"].startswith("网信办")
+
+            # DELETE 清除
+            resp = client.delete("/api/annotations?title=WEB_TEST_TITLE")
+            assert resp.status_code == 200
+            assert resp.json()["removed"] is True
+            refs = regs._lookup_regulations("WEB_TEST_TITLE")
+            assert refs[0]["regulation"] == "unknown"
+        finally:
+            if old is not None:
+                os.environ["AGENTLENS_ANNOTATIONS"] = old
+            else:
+                os.environ.pop("AGENTLENS_ANNOTATIONS", None)
+            _invalidate_annotations_cache()
+            os.unlink(tmp.name)
+
 
 class TestPages:
     """Tests for HTML page endpoints."""
