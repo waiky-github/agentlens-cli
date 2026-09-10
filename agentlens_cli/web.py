@@ -89,6 +89,9 @@ _AUDIT_TASKS = _load_tasks()
 
 _FIXED_FILE = REPORT_DIR / "fixed-findings.json"
 
+# 任务3（2026-09-10）：修复回归验证——连续缺席 N 次审计才确认修复（verified）
+VERIFY_STREAK_REQUIRED = 3
+
 
 def _load_fixed_findings() -> list[dict]:
     """Load persisted fixed-findings tracking data."""
@@ -2097,16 +2100,19 @@ def _get_latest_findings() -> list[dict]:
 
 
 def _recheck_fixed_findings(report_path: str) -> dict | None:
-    """Recheck all marked_fixed findings against a new report.
+    """Recheck marked_fixed / closed findings against a new report (regression verification).
 
-    For each marked_fixed finding:
-    - If the finding still appears in the new report → status becomes "reopened"
-    - If the finding is absent → status becomes "closed"
+    状态机（2026-09-10 任务3 增强，连续缺席 N 次审计才确认修复，期间出现即回归）:
+    - marked_fixed + 再次出现 → status="reopened", verify_status="regressed"（回归）
+    - marked_fixed + 缺席 → absent_streak+=1；连续 VERIFY_STREAK_REQUIRED 次缺席
+      → status="closed", verify_status="verified"；不足则保持 marked_fixed + "verifying"
+    - closed + 再次出现 → status="reopened", verify_status="regressed"（回归，闭环防复发）
+    - closed + 持续缺席 → 保持 closed + "verified"
 
     Returns a summary dict or None if no recheck was needed.
     """
     fixed_list = _load_fixed_findings()
-    marked = [f for f in fixed_list if f.get("status") == "marked_fixed"]
+    marked = [f for f in fixed_list if f.get("status") in ("marked_fixed", "closed")]
     if not marked:
         return None
 
@@ -2126,26 +2132,71 @@ def _recheck_fixed_findings(report_path: str) -> dict | None:
     recheck_time = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     reopened = 0
     closed = 0
+    verified = 0
+    regressed = 0
 
     for entry in fixed_list:
-        if entry.get("status") != "marked_fixed":
+        if entry.get("status") not in ("marked_fixed", "closed"):
             continue
         layer, title = _decode_finding_key(entry["key"])
+        history = entry.setdefault("recheck_history", [])
         if (layer, title) in current_keys:
+            # 再次出现 → 回归（无论之前是 marked_fixed 还是 closed）
             entry["status"] = "reopened"
-            entry["rechecked_at"] = recheck_time
+            entry["verify_status"] = "regressed"
+            entry["absent_streak"] = 0
             reopened += 1
+            regressed += 1
+            history.append({"ts": recheck_time, "result": "regressed"})
         else:
-            entry["status"] = "closed"
-            entry["rechecked_at"] = recheck_time
-            closed += 1
+            # 缺席 → 累计连续缺席次数
+            streak = int(entry.get("absent_streak", 0)) + 1
+            entry["absent_streak"] = streak
+            if entry.get("status") == "marked_fixed":
+                if streak >= VERIFY_STREAK_REQUIRED:
+                    entry["status"] = "closed"
+                    entry["verify_status"] = "verified"
+                    closed += 1
+                    verified += 1
+                    history.append({"ts": recheck_time, "result": "verified"})
+                else:
+                    entry["verify_status"] = "verifying"
+                    history.append(
+                        {"ts": recheck_time, "result": f"absent {streak}/{VERIFY_STREAK_REQUIRED}"}
+                    )
+            else:  # closed 且持续缺席 → 保持验证通过
+                entry["verify_status"] = "verified"
+                history.append({"ts": recheck_time, "result": "still_absent"})
+        entry["rechecked_at"] = recheck_time
 
     _save_fixed_findings(fixed_list)
     return {
         "rechecked_at": recheck_time,
         "reopened": reopened,
         "closed": closed,
+        "verified": verified,
+        "regressed": regressed,
         "total": len(marked),
+    }
+
+
+@app.get("/api/findings/verification")
+async def api_findings_verification():
+    """任务3（2026-09-10）：修复回归验证汇总——verified / verifying / regressed 状态与历史。
+
+    基于 fixed-findings.json 的 verify_status 状态机（连续 VERIFY_STREAK_REQUIRED 次
+    审计缺席才 verified；期间再次出现即 regressed）。
+    """
+    fixed_list = _load_fixed_findings()
+    entries = [e for e in fixed_list if e.get("verify_status")]
+    summary = {"verified": 0, "verifying": 0, "regressed": 0}
+    for e in entries:
+        vs = e.get("verify_status", "verifying")
+        summary[vs] = summary.get(vs, 0) + 1
+    return {
+        "summary": summary,
+        "streak_required": VERIFY_STREAK_REQUIRED,
+        "entries": entries,
     }
 
 
@@ -2351,6 +2402,21 @@ def _build_fix_track_page() -> str:
         }
         return labels.get(status, f'<span class="badge">{status}</span>')
 
+    def _verify_badge(entry: dict) -> str:
+        """任务3（2026-09-10）：修复回归验证状态徽章（verifying/verified/regressed）。"""
+        vs = entry.get("verify_status", "")
+        streak = entry.get("absent_streak", 0)
+        if vs == "verified":
+            return ' <span class="badge badge-ok" title="连续缺席审计验证通过">✓ 已验证</span>'
+        if vs == "regressed":
+            return ' <span class="badge badge-err" title="修复后再次出现，已回归">回归</span>'
+        if vs == "verifying":
+            return (
+                f' <span class="badge badge-info" title="修复验证中，连续缺席 '
+                f'{VERIFY_STREAK_REQUIRED} 次审计确认">验证中 {streak}/{VERIFY_STREAK_REQUIRED}</span>'
+            )
+        return ""
+
     # Build findings table rows
     rows = []
     for (layer, title), f in sorted(groups.items(), key=lambda x: (x[1].get("est_wasted_cost") or 0), reverse=True):
@@ -2367,7 +2433,7 @@ def _build_fix_track_page() -> str:
             f'<td>{f["layer"]}</td>'
             f'<td>{f["title"][:60]}{"…" if len(f["title"]) > 60 else ""}{count_str}</td>'
             f'<td class="num">{waste_display}</td>'
-            f'<td>{_status_badge(status)}</td>'
+            f'<td>{_status_badge(status)}{_verify_badge(tracked)}</td>'
             f'<td>'
             f'<button class="btn btn-ghost btn-sm" onclick="markFixed(\'{url_key}\')" '
             f'{"disabled" if status in ("marked_fixed", "closed") else ""}>标记已修复</button>'
