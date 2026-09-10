@@ -137,6 +137,14 @@ OWASP_TITLE_OVERRIDES: dict[str, list[dict]] = {
         _owasp_ref("owasp_llm_2026", "LLM07"),
         _owasp_ref("owasp_agentic", "ASI08"),
     ],
+    "SYSTEM_PROMPT_LEAKAGE_SUSPECTED": [
+        _owasp_ref("owasp_llm_2026", "LLM08"),
+        _owasp_ref("owasp_agentic", "ASI06"),
+    ],
+    "LARGE_OUTPUT_CONTEXT_EXPOSURE_SUSPECTED": [
+        _owasp_ref("owasp_llm_2026", "LLM08"),
+        _owasp_ref("owasp_llm_2026", "LLM06"),
+    ],
 }
 
 # 审计层 → OWASP 默认映射（finding 无精确 override 时按层兜底）
