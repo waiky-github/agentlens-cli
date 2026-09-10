@@ -475,11 +475,19 @@ DYNAMIC_REGULATIONS: list[tuple[str, list[dict]]] = [
 
 
 def _annotations_path() -> Path:
-    """Resolve the manual annotations file path (env AGENTLENS_ANNOTATIONS overrides default)."""
+    """Resolve the manual annotations file path.
+
+    Resolution order: AGENTLENS_ANNOTATIONS > AGENTLENS_REPORT_DIR/annotations.json
+    > ~/.hermes/agentlens-reports/annotations.json (same convention as web/notify/budget).
+    """
     env = os.environ.get("AGENTLENS_ANNOTATIONS")
     if env:
         return Path(env)
-    return Path(os.path.expanduser("~/.hermes/agentlens-reports/annotations.json"))
+    report_dir = os.environ.get(
+        "AGENTLENS_REPORT_DIR",
+        os.path.expanduser("~/.hermes/agentlens-reports"),
+    )
+    return Path(report_dir) / "annotations.json"
 
 
 _annotations_cache: dict[str, list[dict]] | None = None
