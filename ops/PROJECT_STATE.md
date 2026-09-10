@@ -75,7 +75,7 @@
 - [x] **GitHub git 历史 push（2026-09-10 完成：gh-accel 通道 force push main，46 commits，HEAD==origin/main）**
 - [x] **版本 0.3.0（2026-09-10 发布 PyPI：Web 服务 + W1-W3 + OWASP/leakage/verification/budget 全部功能）**
 - [x] **Web 服务版本号/README 更新（2026-09-10 完成：pyproject 0.3.0 + README/README.en Web 平台节 + MCP 7 工具 + 246 测试）**
-- [ ] 销售材料（用户已认可方向：先功能后宣传，功能开发完成后再做 BD）
+- [x] **销售材料（2026-09-10 完成，f16897a）**：traecli 派单产出 4 份初稿——01 产品一页纸 / 02 定价建议（3 档，标注「建议价」）/ 03 适用场景（不编造客户案例）/ 04 FAQ（13 问答）；数字全部来自项目真实事实（246 测试 / 63-76% 可避免成本 / OWASP+网信办双对齐），编造红线验真通过
 
 ## 里程碑
 - 2026-09-08：agentlens-cli 从零到发布（Trae 4 轮任务 + 我验真 + 7 功能批次，10 次 commit）
