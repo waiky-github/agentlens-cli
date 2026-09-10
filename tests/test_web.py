@@ -170,6 +170,20 @@ class TestApiWatchdog:
             assert "baseline_mtime" in data
             assert "event_count" in data
 
+    def test_watchdog_history_returns_200(self):
+        resp = client.get("/api/watchdog/history")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "history" in data
+        assert "total" in data
+
+    def test_budget_alerts_returns_200(self):
+        resp = client.get("/api/budget/alerts")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "history" in data
+        assert "total" in data
+
 
 class TestPages:
     """Tests for HTML page endpoints."""

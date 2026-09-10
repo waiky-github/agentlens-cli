@@ -31,7 +31,12 @@ from agentlens_cli.notify import (
     save_notify_config,
     send_notify,
 )
-from .budget import check_budget, format_budget_alert_body
+from .budget import (
+    append_budget_alert,
+    check_budget,
+    format_budget_alert_body,
+    load_budget_alerts,
+)
 
 # ─────────────────────────────────────────────────────────────────
 # Config
@@ -2044,6 +2049,22 @@ async def api_audit_run(request: Request):
                 "alerts": budget_result["alerts"],
                 "notify": notify_results,
             }
+            # O3: 追加预算告警历史（budget-alerts.json，每次触发一条）
+            try:
+                append_budget_alert(
+                    {
+                        "events_loaded": meta.get("events", 0),
+                        "cost": {
+                            "total_cost": meta.get("total_cost", 0.0),
+                            "total_est_wasted_cost": meta.get("est_waste", 0.0),
+                            "avoidable_cost_ratio": meta.get("avoidable_cost_ratio", 0.0),
+                        },
+                    },
+                    budget_result["alerts"],
+                    REPORT_DIR,
+                )
+            except Exception:
+                pass
     except Exception:
         pass
 
@@ -2117,6 +2138,13 @@ async def api_watchdog_history():
     from .watchdog import load_drift_history
 
     history = load_drift_history(REPORT_DIR / "drift-history.json")
+    return {"history": history, "total": len(history)}
+
+
+@app.get("/api/budget/alerts")
+async def api_budget_alerts(limit: int = 100):
+    """Return recent budget alert history (newest first)."""
+    history = load_budget_alerts(REPORT_DIR, limit=limit)
     return {"history": history, "total": len(history)}
 
 

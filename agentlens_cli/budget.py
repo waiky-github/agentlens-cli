@@ -107,3 +107,64 @@ def format_budget_alert_body(result: dict, alerts: list[dict]) -> str:
     for a in alerts:
         lines.append(f"- {a['message']}")
     return "\n".join(lines)
+
+
+def append_budget_alert(
+    result: dict,
+    alerts: list[dict],
+    report_dir: Optional[Path] = None,
+) -> list[dict]:
+    """Append one budget-alert history record to budget-alerts.json.
+
+    Each triggered audit appends a timestamped record (appends, never overwrites —
+    one day can trigger multiple audits). Returns the full history list.
+    """
+    import datetime
+
+    if report_dir is None:
+        report_dir = _default_report_dir()
+    path = report_dir / "budget-alerts.json"
+
+    history = []
+    if path.is_file():
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(loaded, list):
+                history = loaded
+        except (ValueError, OSError):
+            history = []
+
+    cost = result.get("cost", {}) or {}
+    now = datetime.datetime.now()
+    record = {
+        "timestamp": now.isoformat(timespec="microseconds"),
+        "date": now.date().isoformat(),
+        "events_loaded": result.get("events_loaded", 0),
+        "total_cost": cost.get("total_cost", 0.0),
+        "est_waste": cost.get("total_est_wasted_cost", 0.0),
+        "avoidable_ratio": cost.get("avoidable_cost_ratio", 0.0),
+        "alerts": alerts,
+    }
+    history.append(record)
+    # 按时间戳排序（最新在后），保留全部历史
+    history.sort(key=lambda h: h.get("timestamp", ""))
+    report_dir.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(history, ensure_ascii=False, indent=2), encoding="utf-8")
+    return history
+
+
+def load_budget_alerts(report_dir: Optional[Path] = None, limit: int = 100) -> list[dict]:
+    """Load budget-alert history (newest first). Returns [] if missing/corrupt."""
+    if report_dir is None:
+        report_dir = _default_report_dir()
+    path = report_dir / "budget-alerts.json"
+    if not path.is_file():
+        return []
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(loaded, list):
+            return []
+        loaded.sort(key=lambda h: h.get("timestamp", ""), reverse=True)
+        return loaded[:limit]
+    except (ValueError, OSError):
+        return []

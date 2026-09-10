@@ -10,8 +10,10 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from agentlens_cli.budget import (  # noqa: E402
+    append_budget_alert,
     check_budget,
     format_budget_alert_body,
+    load_budget_alerts,
     load_budget_config,
 )
 
@@ -123,3 +125,41 @@ class TestFormatBody:
         assert "200.00" in body
         assert "500" in body
         assert "超过预算" in body
+
+
+class TestBudgetAlertHistory:
+    def test_append_and_load(self, tmp_path):
+        result = _result(total_cost=200, est_waste=80, events=300)
+        alerts = [{"kind": "total_cost", "limit": 100.0, "actual": 200.0, "message": "超 budget"}]
+        history = append_budget_alert(result, alerts, tmp_path)
+        assert len(history) == 1
+        assert history[0]["total_cost"] == 200.0
+        assert history[0]["events_loaded"] == 300
+
+        loaded = load_budget_alerts(tmp_path)
+        assert len(loaded) == 1
+        assert loaded[0]["alerts"][0]["kind"] == "total_cost"
+
+    def test_multiple_appends_accumulate(self, tmp_path):
+        r1 = _result(total_cost=120)
+        r2 = _result(total_cost=180)
+        append_budget_alert(r1, [{"kind": "total_cost", "limit": 100, "actual": 120, "message": ""}], tmp_path)
+        append_budget_alert(r2, [{"kind": "total_cost", "limit": 100, "actual": 180, "message": ""}], tmp_path)
+        loaded = load_budget_alerts(tmp_path, limit=10)
+        assert len(loaded) == 2
+        # newest first
+        assert loaded[0]["total_cost"] == 180.0
+        assert loaded[1]["total_cost"] == 120.0
+
+    def test_load_missing_returns_empty(self, tmp_path):
+        assert load_budget_alerts(tmp_path) == []
+
+    def test_load_corrupt_returns_empty(self, tmp_path):
+        path = tmp_path / "budget-alerts.json"
+        path.write_text("{not json", encoding="utf-8")
+        assert load_budget_alerts(tmp_path) == []
+
+    def test_limit_caps_results(self, tmp_path):
+        for i in range(5):
+            append_budget_alert(_result(total_cost=100 + i), [{"kind": "x", "limit": 0, "actual": 0, "message": ""}], tmp_path)
+        assert len(load_budget_alerts(tmp_path, limit=2)) == 2
