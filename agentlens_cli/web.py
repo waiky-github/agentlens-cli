@@ -31,6 +31,7 @@ from agentlens_cli.notify import (
     save_notify_config,
     send_notify,
 )
+from .budget import check_budget, format_budget_alert_body
 
 # ─────────────────────────────────────────────────────────────────
 # Config
@@ -2009,6 +2010,39 @@ async def api_audit_run(request: Request):
         recheck_result = _recheck_fixed_findings(output_path)
         if recheck_result:
             task_entry["recheck"] = recheck_result
+    except Exception:
+        pass
+
+    # 任务4（2026-09-10）: 成本预算告警——超阈值走 notify 通道
+    try:
+        html_content = Path(output_path).read_text(encoding="utf-8")
+        meta = _parse_html_report(html_content)
+        budget_result = check_budget({
+            "events_loaded": meta.get("events", 0),
+            "cost": {
+                "total_cost": meta.get("total_cost", 0.0),
+                "total_est_wasted_cost": meta.get("est_waste", 0.0),
+                "avoidable_cost_ratio": meta.get("avoidable_cost_ratio", 0.0),
+            },
+        })
+        if budget_result["triggered"]:
+            body = format_budget_alert_body(
+                {
+                    "events_loaded": meta.get("events", 0),
+                    "cost": {
+                        "total_cost": meta.get("total_cost", 0.0),
+                        "total_est_wasted_cost": meta.get("est_waste", 0.0),
+                        "avoidable_cost_ratio": meta.get("avoidable_cost_ratio", 0.0),
+                    },
+                },
+                budget_result["alerts"],
+            )
+            notify_results = send_notify("🚨 AgentLens 成本预算告警", body)
+            task_entry["budget_alert"] = {
+                "triggered": True,
+                "alerts": budget_result["alerts"],
+                "notify": notify_results,
+            }
     except Exception:
         pass
 
