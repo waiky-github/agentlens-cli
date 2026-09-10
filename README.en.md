@@ -146,11 +146,27 @@ python -m agentlens_cli.mcp_server --transport http --port 8765 --host 127.0.0.1
 | `cost_analysis` | Cost analysis (total / avoidable / ratio) |
 | `verify_report` | Report integrity verification (tamper-evident hash chain) |
 | `list_regulations` | Regulation mapping lookup |
+| `watchdog_status` | Watchdog baseline status (baseline events / report count) |
+| `remediation_lookup` | Remediation lookup (by finding title) |
+| `fix_tracking_status` | Fix tracking status (verified / verifying / regressed) |
+
+## 🌐 Web Platform (0.3.0)
+
+Built-in FastAPI web platform: dashboard KPIs + trend charts, report list/detail/compare, trigger audit, fix tracking (mark-fixed + regression verification), compliance annotation, budget alert history, Watchdog drift trend chart.
+
+```bash
+pip install agentlens-audit[web]
+agentlens-audit serve --host 0.0.0.0 --port 8010
+```
+
+- Auth: Basic Auth when `AGENTLENS_WEB_USERNAME` / `AGENTLENS_WEB_PASSWORD` env vars are set (otherwise open, intranet only)
+- Report dir: override with `AGENTLENS_REPORT_DIR` (default `~/.hermes/agentlens-reports`)
+- Key APIs: `/api/reports` / `/api/audit/run` / `/api/findings/*` / `/api/watchdog`(+`/history`) / `/api/budget/alerts` / `/api/annotations`
 
 ## 🧪 Tests
 
 ```bash
-python -m pytest tests/ -v   # 120 tests green
+python -m pytest tests/ -v   # 246 tests green
 ```
 
 ## 📦 Release
