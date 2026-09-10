@@ -23,7 +23,7 @@
 - 扩展功能（2026-09-08/09 全部完成并验真）：
   - **N1 报告防篡改**：integrity.py，SHA-256 文档哈希 + 哈希链，verify 子命令验真（篡改 exit 1）
   - **N3 合规条款映射**：regulations.py，439 findings 映射网信办《实施意见》/EU AI Act/拟人化办法，HTML 第 7 节汇总表
-  - **N2 MCP server**：mcp_server.py，FastMCP 4 工具（audit/cost_analysis/verify_report/list_regulations），stdio + streamable-http 双传输，0.2.1[mcp] 全新环境实测注册成功；**2026-09-10 扩到 7 工具**（+watchdog_status/remediation_lookup/fix_tracking_status，723ffae）
+  - **N2 MCP server**：mcp_server.py，FastMCP 7 工具（audit/cost_analysis/verify_report/list_regulations/watchdog_status/remediation_lookup/fix_tracking_status），stdio + streamable-http 双传输。**2026-09-10 已接入 Hermes**（config.yaml mcp_servers.agentlens enabled 7/7）：wrapper `scripts/run_mcp_server.sh`（避免 hermes mcp add 吞 -m flag，用 --command 脚本 + --env AGENTLENS_REPORT_DIR）；agentlens-venv 需 **mcp==1.29.1**（FastMCP API，2.x 的 mcpserver 模块不兼容 hermes 客户端 mcp 2.x）
   - **watchdog 持续审计**：watchdog.py，建基线→定期复检→发现「新增问题漂移」，退出码 0/1/2 报警语义，cron 可调度（含「已有 high 数量增长」漏报修复）
   - **remediation 修复建议**：remediation.py，每类 finding 配具体修复建议（action+detail+priority），439 findings 全覆盖；HTML 每条 finding 加修复建议区块 + 第 8 节修复优先级汇总
   - **报告仪表盘**（2026-09-09）：report.py 顶部「一页速览」——6 KPI 卡（发现总数/预估浪费/影子/审批绕过/可避免占比/闭环率）+ 3 张 ECharts 图（严重度分布环形图/Top10 浪费条形图/Agent 成本+Token 双轴图），ECharts CDN + 三重 resize 兜底 + 动画禁用（静态全貌）
