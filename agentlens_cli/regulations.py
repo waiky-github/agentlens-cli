@@ -3,6 +3,10 @@
 Primary regulation: 网信办《智能体规范应用与创新发展实施意见》(2026-05-08)
 Secondary regulation: EU AI Act (2024/1689)
 Supplementary: 《人工智能拟人化互动服务管理暂行办法》(2026-07-15)
+International security frameworks (added 2026-09-10):
+    OWASP Top 10 for LLM Applications 2026 (announced 2026-09-02)
+    OWASP Top 10 for Agentic Applications 2026 (ASI01-ASI10)
+    OWASP Agent Control Standard (ACS 2026)
 """
 
 # ── Regulation definitions ──────────────────────────────────────────
@@ -11,6 +15,166 @@ REGULATION_NAMES = {
     "impl_opinions": "网信办《智能体规范应用与创新发展实施意见》(2026-05-08)",
     "eu_ai_act": "EU AI Act (2024/1689)",
     "personification": "《人工智能拟人化互动服务管理暂行办法》(2026-07-15)",
+    "owasp_llm_2026": "OWASP Top 10 for LLM Applications 2026",
+    "owasp_agentic": "OWASP Top 10 for Agentic Applications 2026 (ASI)",
+    "acs": "OWASP Agent Control Standard (ACS 2026)",
+}
+
+# ── OWASP LLM Top 10 2026 (announced 2026-09-02, generalanalysis/owasp 2026 guide) ──
+# Note: 2026 编号与 2025 不同——System Prompt Leakage 已改名 Hidden Context Exposure 并移至 LLM08；
+# Excessive Agency 升至第 3，Improper Output Handling 降至第 10。
+
+OWASP_LLM_2026 = {
+    "LLM01": "Prompt Injection — 不可信文本/文件/工具结果/记忆与指令共享上下文，模型遵循后产生后果",
+    "LLM02": "Sensitive Information Disclosure — 机密数据进入模型上下文或输出，流向用户/日志/供应商/下游",
+    "LLM03": "Excessive Agency — 工具/函数/权限/自主步骤超出任务实际所需",
+    "LLM04": "Supply Chain — 模型/适配器/数据集/库/托管服务的来源、完整性、评估历史与更新路径需可验证",
+    "LLM05": "Data and Model Poisoning — 训练/微调/反馈/评估/检索输入可被篡改且难以检测",
+    "LLM06": "Unbounded Consumption — 请求/token/递归/扇出/模型提取/花费缺少每用户、每租户、每工作流限制",
+    "LLM07": "Misinformation — 无证据支持或编造的声明影响人或自动化决策",
+    "LLM08": "Hidden Context Exposure — 隐藏上下文含机密或安全逻辑，泄露会增强攻击者能力（原 System Prompt Leakage）",
+    "LLM09": "Vector and Embedding Weaknesses — 检索/索引投毒/嵌入反演可跨授权边界泄露",
+    "LLM10": "Improper Output Handling — 模型输出被解析器/渲染器/解释器/API 未经验证与编码即消费",
+}
+
+# ── OWASP Top 10 for Agentic Applications 2026 (ASI01-ASI10, Black Hat Europe 2025 发布) ──
+
+OWASP_AGENTIC = {
+    "ASI01": "Agent Goal Hijack — 恶意内容改变 agent 的目标或决策路径",
+    "ASI02": "Tool Misuse and Exploitation — agent 被操纵误用合法工具",
+    "ASI03": "Identity and Privilege Abuse — 继承/缓存的凭证被利用（含影子 agent 继承合法凭证）",
+    "ASI04": "Agentic Supply Chain Vulnerabilities — 被篡改的工具/模型/提示模板影响执行",
+    "ASI05": "Unexpected Code Execution — agent 生成或运行攻击者控制的代码",
+    "ASI06": "Memory and Context Poisoning — 记忆或 RAG 存储持久性损坏后被信任",
+    "ASI07": "Insecure Inter-Agent Communication — agent 间消息被伪造/重放/篡改",
+    "ASI08": "Cascading Agent Failures — 小错误跨 agent 传播并放大",
+    "ASI09": "Human-Agent Trust Exploitation — 用户过度信任有说服力的 agent 而批准危害",
+    "ASI10": "Rogue Agents — 被攻陷或错位的 agent 看似合法地作恶",
+}
+
+# ── OWASP reference helpers ─────────────────────────────────────────
+
+
+def _owasp_ref(framework_key: str, code: str) -> dict:
+    """Build a single OWASP/ACS reference dict."""
+    if framework_key == "owasp_llm_2026":
+        return {"regulation": REGULATION_NAMES["owasp_llm_2026"], "article": code, "clause": OWASP_LLM_2026[code]}
+    if framework_key == "owasp_agentic":
+        return {"regulation": REGULATION_NAMES["owasp_agentic"], "article": code, "clause": OWASP_AGENTIC[code]}
+    return {"regulation": REGULATION_NAMES["acs"], "article": "ACS", "clause": code}
+
+
+# 精确 title → OWASP 映射（关键 finding 覆盖 layer fallback 的默认推断）
+OWASP_TITLE_OVERRIDES: dict[str, list[dict]] = {
+    "SHADOW_AGENT_DETECTED": [
+        _owasp_ref("owasp_agentic", "ASI10"),
+        _owasp_ref("owasp_agentic", "ASI03"),
+    ],
+    "UNAUTHORIZED_TOOL_CALL": [
+        _owasp_ref("owasp_agentic", "ASI02"),
+        _owasp_ref("owasp_agentic", "ASI03"),
+    ],
+    "PRIVILEGE_BOUNDARY_VIOLATION": [
+        _owasp_ref("owasp_agentic", "ASI03"),
+        _owasp_ref("owasp_llm_2026", "LLM03"),
+    ],
+    "AUDIT_GAP_NO_APPROVAL_STREAM": [
+        _owasp_ref("owasp_llm_2026", "LLM10"),
+        _owasp_ref("owasp_agentic", "ASI09"),
+        _owasp_ref("acs", "控制面要求 — 关键操作需人类审批门（approval gate）并留痕"),
+    ],
+    "USER_ONLY_VIOLATION": [
+        _owasp_ref("owasp_llm_2026", "LLM03"),
+        _owasp_ref("owasp_agentic", "ASI09"),
+    ],
+    "HIGH_RISK_AUTONOMOUS_DECISION": [
+        _owasp_ref("owasp_llm_2026", "LLM03"),
+        _owasp_ref("owasp_agentic", "ASI09"),
+        _owasp_ref("acs", "控制面要求 — 高风险自主决策须有人类审批门"),
+    ],
+    "MISSING_USER_AUTHORIZATION": [
+        _owasp_ref("owasp_llm_2026", "LLM03"),
+        _owasp_ref("owasp_agentic", "ASI09"),
+    ],
+    "MISSING_INFORMED_CONSENT": [
+        _owasp_ref("owasp_agentic", "ASI09"),
+    ],
+    "APPROVAL_BYPASS_CONFIRMED": [
+        _owasp_ref("owasp_llm_2026", "LLM03"),
+        _owasp_ref("owasp_agentic", "ASI09"),
+        _owasp_ref("acs", "控制面要求 — 审批门（approval gate）被绕过即控制面失效"),
+    ],
+    "large-output tool injection ungoverned": [
+        _owasp_ref("owasp_llm_2026", "LLM01"),
+    ],
+    "no per-agent token caps observed": [
+        _owasp_ref("owasp_llm_2026", "LLM06"),
+    ],
+    "session-level context bloat: no deliberate compaction": [
+        _owasp_ref("owasp_llm_2026", "LLM06"),
+    ],
+    "events missing evidence_ref": [
+        _owasp_ref("owasp_llm_2026", "LLM07"),
+    ],
+    "finding evidence_refs not resolvable": [
+        _owasp_ref("owasp_llm_2026", "LLM07"),
+    ],
+    "unclosed tasks detected": [
+        _owasp_ref("owasp_agentic", "ASI08"),
+    ],
+    "absent workers: dispatched but no completion": [
+        _owasp_ref("owasp_agentic", "ASI08"),
+    ],
+    "data gaps in collaboration graph": [
+        _owasp_ref("owasp_agentic", "ASI08"),
+        _owasp_ref("owasp_agentic", "ASI07"),
+    ],
+    "task_dispatch missing rationale": [
+        _owasp_ref("owasp_llm_2026", "LLM07"),
+        _owasp_ref("owasp_agentic", "ASI08"),
+    ],
+    "task_split missing rationale": [
+        _owasp_ref("owasp_llm_2026", "LLM07"),
+        _owasp_ref("owasp_agentic", "ASI08"),
+    ],
+}
+
+# 审计层 → OWASP 默认映射（finding 无精确 override 时按层兜底）
+OWASP_LAYER_FALLBACK: dict[str, list[dict]] = {
+    "shadow": [
+        _owasp_ref("owasp_agentic", "ASI10"),
+        _owasp_ref("owasp_agentic", "ASI03"),
+        _owasp_ref("owasp_llm_2026", "LLM03"),
+    ],
+    "compliance": [
+        _owasp_ref("owasp_llm_2026", "LLM03"),
+        _owasp_ref("owasp_agentic", "ASI09"),
+        _owasp_ref("owasp_llm_2026", "LLM10"),
+        _owasp_ref("acs", "控制面要求 — 决策权限分层需人类审批门留痕"),
+    ],
+    "decision": [
+        _owasp_ref("owasp_llm_2026", "LLM03"),
+        _owasp_ref("owasp_agentic", "ASI09"),
+        _owasp_ref("owasp_llm_2026", "LLM01"),
+    ],
+    "evidence": [
+        _owasp_ref("owasp_llm_2026", "LLM07"),
+        _owasp_ref("owasp_llm_2026", "LLM10"),
+        _owasp_ref("owasp_agentic", "ASI08"),
+    ],
+    "cost": [
+        _owasp_ref("owasp_llm_2026", "LLM06"),
+        _owasp_ref("owasp_agentic", "ASI02"),
+    ],
+    "graph": [
+        _owasp_ref("owasp_agentic", "ASI07"),
+        _owasp_ref("owasp_agentic", "ASI08"),
+        _owasp_ref("owasp_agentic", "ASI06"),
+    ],
+    "gate": [
+        _owasp_ref("owasp_llm_2026", "LLM10"),
+        _owasp_ref("acs", "控制面要求 — CI 门禁即发布前控制面检查"),
+    ],
 }
 
 # ── Finding title → regulation references mapping ───────────────────
@@ -309,10 +473,33 @@ def _lookup_regulations(title: str) -> list[dict]:
     return [{"regulation": "unknown", "article": "", "note": "manual review required"}]
 
 
-def map_finding(finding: dict) -> dict:
-    """Add regulation_refs to a single finding dict in-place. Returns the same dict."""
-    title = finding.get("title", "")
-    finding["regulation_refs"] = _lookup_regulations(title)
+def map_finding(finding: dict, layer: str = None) -> dict:
+    """Add regulation_refs to a single finding dict in-place. Returns the same dict.
+
+    layer 用于 OWASP/ACS 框架级映射的兜底推断：
+    - 精确 title override 优先
+    - 无 override 但 layer 已知（map_all_layers 总传）→ 按审计层关联风险类别兜底
+    - 完全未知（无 override 且 layer 未知）→ 保持 manual review，不硬塞
+    """
+    title = str(finding.get("title") or "")
+    refs = _lookup_regulations(title)
+
+    owasp_refs = OWASP_TITLE_OVERRIDES.get(title)
+    if owasp_refs is None and layer in OWASP_LAYER_FALLBACK:
+        owasp_refs = OWASP_LAYER_FALLBACK[layer]
+
+    if owasp_refs:
+        existing_keys = {
+            (r.get("regulation"), r.get("article"), r.get("clause"), r.get("note", ""))
+            for r in refs
+        }
+        for r in owasp_refs:
+            key = (r.get("regulation"), r.get("article"), r.get("clause"), r.get("note", ""))
+            if key not in existing_keys:
+                refs.append(r)
+                existing_keys.add(key)
+
+    finding["regulation_refs"] = refs
     return finding
 
 
@@ -328,7 +515,7 @@ def map_all_layers(result: dict) -> dict:
             continue
         findings = layer.get("findings", [])
         for f in findings:
-            map_finding(f)
+            map_finding(f, layer=key)
     return result
 
 

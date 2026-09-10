@@ -787,6 +787,7 @@ class _HtmlBuilder:
         layer_keys = ["graph", "decision", "evidence", "cost", "shadow", "compliance"]
         seen_regs = set()
         reg_rows = []
+        owasp_stats = {}  # OWASP code (LLMxx / ASIxx / ACS) -> finding count
         for key in layer_keys:
             layer = self._r.get(key, {})
             if not isinstance(layer, dict):
@@ -810,15 +811,40 @@ class _HtmlBuilder:
                                 f"<tr><td>{self._esc(regulation)}</td>"
                                 f"<td>{self._esc(article)}</td><td>{self._esc(clause)}</td></tr>"
                             )
+                    # OWASP coverage stats (count findings, not unique refs)
+                    reg_name = ref.get("regulation", "")
+                    if "OWASP Top 10 for LLM" in reg_name or "Agentic Applications" in reg_name or "ACS" in reg_name:
+                        key_name = ref.get("article", "ACS")
+                        owasp_stats[key_name] = owasp_stats.get(key_name, 0) + 1
         if not reg_rows:
             return ""
+
+        # OWASP 覆盖矩阵：按条目 code 排序（LLM01..10, ASI01..10, ACS）
+        owasp_order = [f"LLM{i:02d}" for i in range(1, 11)] + [f"ASI{i:02d}" for i in range(1, 11)] + ["ACS"]
+        owasp_rows = []
+        for code in owasp_order:
+            if code in owasp_stats:
+                owasp_rows.append(
+                    f"<tr><td>{self._esc(code)}</td><td>{owasp_stats[code]}</td></tr>"
+                )
+        owasp_html = ""
+        if owasp_rows:
+            owasp_html = (
+                f'<h3 style="margin-top:20px">OWASP 覆盖矩阵（2026）</h3>'
+                f'<p style="font-size:12px;color:#888;margin-bottom:12px">'
+                f'本次审计发现涉及的 OWASP LLM Top 10 2026 / Agentic Top 10 (ASI) / ACS 条目覆盖情况'
+                f'（条目 → 命中 finding 数）。</p>'
+                f'<table class="owasp-matrix"><thead><tr>'
+                f'<th>OWASP 条目</th><th>命中 finding 数</th>'
+                f'</tr></thead><tbody>{"".join(owasp_rows)}</tbody></table>'
+            )
 
         return (
             f'<div class="section" id="layer-compliance-mapping">'
             f'<h2><span class="layer-badge">07</span> 合规条款映射<a href="#dashboard" class="back-to-top">返回概览 ↑</a></h2>'
             f'<div class="metrics-bar">'
             f'<span>引用的法规条款: <strong>{len(reg_rows)}</strong></span>'
-            f'<span>主要法规: 网信办《实施意见》(2026-05-08) / EU AI Act (2024/1689) / 《拟人化互动办法》(2026-07-15)</span>'
+            f'<span>主要法规: 网信办《实施意见》(2026-05-08) / EU AI Act (2024/1689) / 《拟人化互动办法》(2026-07-15) / OWASP LLM &amp; Agentic Top 10 2026</span>'
             f'</div>'
             f'<p style="font-size:12px;color:#888;margin-bottom:12px">'
             f'以下为本次审计发现涉及的所有法规条款汇总。每条发现均已标注对应的法规依据。'
@@ -826,6 +852,7 @@ class _HtmlBuilder:
             f'<table><thead><tr>'
             f'<th>法规文件</th><th>条款</th><th>要求</th>'
             f'</tr></thead><tbody>{"".join(reg_rows)}</tbody></table>'
+            f'{owasp_html}'
             f'</div>'
         )
 
