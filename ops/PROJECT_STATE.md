@@ -59,11 +59,12 @@
 | agentlens-web.service | `serve --host 0.0.0.0 --port 8010`，Web 仪表盘 + 报告查看 + 触发审计 API；**Basic Auth**（admin + 随机密码，凭据文件 ~/.hermes/agentlens-web-cred 600，EnvironmentFile 注入） | enabled + active |
 - 报告目录：`~/.hermes/agentlens-reports/`（audit-YYYYMMDD.html + baseline.json）
 - 转换器：scripts/convert_gateway_log.py（丢弃 msg 原文、用户 ID→user:unknown）；调度：scripts/run_daily_audit.sh（DAYS=1，漂移分支 hermes send -t feishu）
-- 端口：liuyao 8000 / agentlens-web 8010 / agentlens-mcp 8765 / hermes-stats 3001
+- 端口：liuyao 8000 / agentlens-web 8010 / agentlens-mcp 8765 / hermes-stats 3001 / **gh-accel 8123**
+- **gh-accel GitHub 自动加速代理**（2026-09-10 部署，借鉴 CrawlEyes 多镜像兜底链）：systemd user `gh-accel.service`，127.0.0.1:8123，代码 `~/.hermes/gh-accel/gh_accel.py`。git 全局 insteadOf（真实 home .gitconfig 为主 + profile include）→ 直连优先，失败自动切 gh-proxy.com→ghproxy.site；push 走代理直连（凭证 ~/.git-credentials 的 127.0.0.1:8123 条目）；raw 固定走镜像（IPv6-only 黑洞）。真实 push 验证通过。运维文档：`~/.hermes/gh-accel/README.md`
 
 ## 待办
 - [x] P0/P1/P2 持续优化批（2026-09-09 全部完成：聚合去重/筛选折叠/剥离 iframe/任务持久化 + 对比页/CSV + 修复跟踪闭环/多项目/通知配置化）
-- [ ] GitHub git 历史 push（等网络恢复/代理：`git remote add origin https://github.com/waiky-github/agentlens-cli.git && git push -u origin main`，需 http.version HTTP/1.1 已全局设）
+- [ ] GitHub git 历史 push（**gh-accel 通道已就绪 2026-09-10**：`git remote add origin https://github.com/waiky-github/agentlens-cli.git && git push -u origin main`，直连恢复即可推，无需代理；大历史 push 建议选网络稳定时段）
 - [ ] 版本 0.3.0（watchdog/remediation 已入 0.2.1，Web 服务 + P0/P1/P2 优化待发版；视用户/市场反馈迭代）
 - [ ] 销售材料（用户已认可方向：先功能后宣传，功能开发完成后再做 BD）
 - [ ] Web 服务版本号/README 更新（serve 子命令 + [web] 安装说明）
@@ -76,3 +77,4 @@
 - 2026-09-09：自治理闭环（21feb09）——P0 阈值调低（tool_output 50000→20000）+ P2 影子误报清零（user:* 前缀豁免）+ 工具调用节流纪律；持久化部署（每天 03:00 审计 + 漂移推飞书）
 - 2026-09-09：报告仪表盘 + Web 服务（e3eba58）——ECharts 一页速览 + serve 完整 API/操作界面，139/139 测试全绿，systemd agentlens-web 常驻 8010 端口
 - 2026-09-09：P0（2a689e1）+ P1（8233af4）+ P2（1deb257）三批持续优化全部完成并验真——修复跟踪闭环 / 多项目 / 通知配置化 / 对比页 / CSV 全量导出；172/172 测试全绿，正式服务 8010 已加载
+- 2026-09-10：gh-accel GitHub 自动加速代理部署（借鉴 CrawlEyes 多镜像兜底链）——git 全局 insteadOf → 127.0.0.1:8123 代理，直连优先/失败自动切 gh-proxy→ghproxy.site，push 走代理直连，真实 push 端到端验证通过；GitHub git 历史 push 通道就此就绪
