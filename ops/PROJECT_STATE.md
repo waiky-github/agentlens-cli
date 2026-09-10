@@ -12,9 +12,9 @@
 ## 发布状态（2026-09-08/09 完成 ✅）
 | 平台 | 状态 | 地址 |
 |:--|:--|:--|
-| **PyPI** | ✅ agentlens-audit **0.2.1**（最新；0.2.0 已废弃），pip install agentlens-audit[mcp] 端到端验证通过 | pypi.org/project/agentlens-audit/ |
-| **GitHub** | ✅ 仓库 waiky-github/agentlens-cli（公开），代码经 API 上传在线 | github.com/waiky-github/agentlens-cli |
-| GitHub git 历史 | ⚠️ 未 push（github.com:443 被墙，api.github.com 通）→ 待网络恢复/代理后 git push 补历史 | — |
+| **PyPI** | ✅ agentlens-audit **0.3.0**（最新；2026-09-10 发布，含 Web 平台/W1-W3/OWASP/leakage/verification/budget 全部功能），pip install agentlens-audit[mcp] 端到端验证通过 | pypi.org/project/agentlens-audit/ |
+| **GitHub** | ✅ 仓库 waiky-github/agentlens-cli（公开），**完整 git 历史已 push（46 commits，2026-09-10 gh-accel 通道）** | github.com/waiky-github/agentlens-cli |
+| GitHub git 历史 | ✅ **已完成 2026-09-10**：force push main（074ee6c...2567670），远程旧 API 快照被完整历史替换，HEAD==origin/main 一致 | — |
 
 ## 功能现状（七层审计 + 扩展）
 - 输入：统一事件流 JSONL / Hermes gateway.log / CrewAI / AutoGen / LangGraph（converters/）
@@ -71,11 +71,11 @@
 
 ## 待办
 - [x] P0/P1/P2 持续优化批（2026-09-09 全部完成：聚合去重/筛选折叠/剥离 iframe/任务持久化 + 对比页/CSV + 修复跟踪闭环/多项目/通知配置化）
-- [x] 2026-09-10 四批优化（任务1 OWASP 合规 / 任务2 泄露检测 / 任务3 修复回归验证 / 任务4 预算告警）+ 方向B（MCP 7 工具 + 报告页修复跟踪入口）
-- [ ] GitHub git 历史 push（**gh-accel 通道已就绪 2026-09-10**：`git remote add origin https://github.com/waiky-github/agentlens-cli.git && git push -u origin main`，直连恢复即可推，无需代理；大历史 push 建议选网络稳定时段）
-- [ ] 版本 0.3.0（watchdog/remediation 已入 0.2.1，Web 服务 + P0/P1/P2 优化待发版；视用户/市场反馈迭代）
+- [x] 2026-09-10 四批优化（任务1 OWASP 合规 / 任务2 泄露检测 / 任务3 修复回归验证 / 任务4 预算告警）+ 方向B（MCP 7 工具 + 报告页修复跟踪入口）+ Web 平台化 W1/W2/W3（合规标注页/预算告警页/Watchdog 趋势图）+ O1-O3（unknown 打底修复/漂移趋势历史/告警历史）
+- [x] **GitHub git 历史 push（2026-09-10 完成：gh-accel 通道 force push main，46 commits，HEAD==origin/main）**
+- [x] **版本 0.3.0（2026-09-10 发布 PyPI：Web 服务 + W1-W3 + OWASP/leakage/verification/budget 全部功能）**
+- [x] **Web 服务版本号/README 更新（2026-09-10 完成：pyproject 0.3.0 + README/README.en Web 平台节 + MCP 7 工具 + 246 测试）**
 - [ ] 销售材料（用户已认可方向：先功能后宣传，功能开发完成后再做 BD）
-- [ ] Web 服务版本号/README 更新（serve 子命令 + [web] 安装说明）
 
 ## 里程碑
 - 2026-09-08：agentlens-cli 从零到发布（Trae 4 轮任务 + 我验真 + 7 功能批次，10 次 commit）
