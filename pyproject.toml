@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta:__legacy__"
 
 [project]
 name = "agentlens-audit"
-version = "0.2.1"
+version = "0.3.0"
 description = "Multi-agent audit CLI: cost governance, decision audit, evidence chain, shadow agent detection, compliance"
 readme = "README.md"
 requires-python = ">=3.9"
