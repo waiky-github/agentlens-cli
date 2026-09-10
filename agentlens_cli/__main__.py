@@ -1036,6 +1036,10 @@ def build_cmd_watchdog(subparsers):
         "--json", action="store_true", default=False,
         help="Output results as JSON (default: human-readable text)",
     )
+    p.add_argument(
+        "--history", default=None,
+        help="可选：漂移历史文件路径（对比后追加一条当日记录，供趋势分析）",
+    )
     p.set_defaults(func=cmd_watchdog)
 
 
@@ -1139,6 +1143,19 @@ def cmd_watchdog(args):
         sys.exit(2)
 
     result = run_watchdog(current_result, baseline)
+
+    # --history：对比后追加当日漂移历史记录（供趋势分析）
+    if args.history:
+        from .watchdog import append_drift_history, build_drift_record
+        import datetime
+
+        record = build_drift_record(
+            date=datetime.date.today().isoformat(),
+            current_result=current_result,
+            watchdog_result=result,
+            events_loaded=len(events),
+        )
+        append_drift_history(args.history, record)
 
     if args.json:
         print(json.dumps(result, indent=2, ensure_ascii=False))

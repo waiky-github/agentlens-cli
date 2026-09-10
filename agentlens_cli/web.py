@@ -2111,6 +2111,15 @@ async def api_watchdog():
     }
 
 
+@app.get("/api/watchdog/history")
+async def api_watchdog_history():
+    """Return daily drift-history records (trend of high findings / drift alerts over time)."""
+    from .watchdog import load_drift_history
+
+    history = load_drift_history(REPORT_DIR / "drift-history.json")
+    return {"history": history, "total": len(history)}
+
+
 # ─────────────────────────────────────────────────────────────────
 # P2-1: Fix tracking API
 # ─────────────────────────────────────────────────────────────────

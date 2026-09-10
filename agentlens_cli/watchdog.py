@@ -102,9 +102,10 @@ def run_watchdog(current_result: dict, baseline: dict) -> dict:
 
     # 数量增长的 high：已有 (layer,title,severity) 的计数变大 —— 同样是高风险漂移，
     # 漏掉会让「unauthorized tool calls 从 5 涨到 20」这类最常见漂移不报警。
+    # 注意 baseline>0 才计（全新 key 归 new_high，避免 new/growing 数字重叠虚高）。
     growing_high = sum(
         1 for key, cc in changed_counts.items()
-        if key.endswith("/high") and cc["delta"] > 0
+        if key.endswith("/high") and cc["baseline"] > 0 and cc["delta"] > 0
     )
 
     b_cost = baseline.get("cost", {}).get("total_cost", 0)
@@ -131,3 +132,94 @@ def run_watchdog(current_result: dict, baseline: dict) -> dict:
         "summary": summary,
         "has_new_high": (new_high + growing_high) > 0,
     }
+
+
+def _count_severity(result: dict, severity: str) -> int:
+    """Count findings of a given severity across all layers."""
+    layer_keys = ["graph", "decision", "evidence", "cost", "shadow", "compliance"]
+    total = 0
+    for key in layer_keys:
+        layer = result.get(key, {})
+        if isinstance(layer, dict):
+            for f in layer.get("findings", []):
+                if f.get("severity") == severity:
+                    total += 1
+    return total
+
+
+def _count_findings(result: dict) -> int:
+    """Count all findings across all layers."""
+    layer_keys = ["graph", "decision", "evidence", "cost", "shadow", "compliance"]
+    return sum(
+        len(result.get(key, {}).get("findings", []))
+        for key in layer_keys
+        if isinstance(result.get(key), dict)
+    )
+
+
+def build_drift_record(
+    date: str,
+    current_result: dict,
+    watchdog_result: dict,
+    events_loaded: int = 0,
+) -> dict:
+    """Build one daily drift-history record from the current audit + watchdog result."""
+    summary = watchdog_result.get("summary", {})
+    cost = current_result.get("cost", {})
+    graph_metrics = current_result.get("graph", {}).get("metrics", {})
+    return {
+        "date": date,
+        "events_loaded": events_loaded,
+        "findings_total": _count_findings(current_result),
+        "high_total": _count_severity(current_result, "high"),
+        "new_high": summary.get("new_high", 0),
+        "growing_high": summary.get("growing_high", 0),
+        "new_medium": summary.get("new_medium", 0),
+        "resolved_high": summary.get("resolved_high", 0),
+        "cost_total": cost.get("total_cost", 0),
+        "closure_rate": graph_metrics.get("closure_rate", 0),
+        "has_new_high": bool(watchdog_result.get("has_new_high", False)),
+    }
+
+
+def append_drift_history(history_path, record: dict) -> list[dict]:
+    """Append a drift-history record to history_path (list of records, oldest first)."""
+    import json
+    import os
+
+    history = []
+    if os.path.isfile(history_path):
+        try:
+            with open(history_path, "r", encoding="utf-8") as fh:
+                loaded = json.load(fh)
+            if isinstance(loaded, list):
+                history = loaded
+        except (json.JSONDecodeError, OSError):
+            history = []
+    # 同日期覆盖（防重复追加）
+    history = [h for h in history if h.get("date") != record.get("date")]
+    history.append(record)
+    history.sort(key=lambda h: h.get("date", ""))
+    parent = os.path.dirname(os.path.abspath(history_path))
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    with open(history_path, "w", encoding="utf-8") as fh:
+        json.dump(history, fh, indent=2, ensure_ascii=False)
+    return history
+
+
+def load_drift_history(history_path):
+    """Load drift history (list of records, oldest first). Returns [] if missing/corrupt."""
+    import json
+    import os
+
+    if not os.path.isfile(history_path):
+        return []
+    try:
+        with open(history_path, "r", encoding="utf-8") as fh:
+            loaded = json.load(fh)
+        if isinstance(loaded, list):
+            return sorted(loaded, key=lambda h: h.get("date", ""))
+    except (json.JSONDecodeError, OSError):
+        pass
+    return []

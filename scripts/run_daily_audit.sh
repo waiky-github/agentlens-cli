@@ -62,7 +62,7 @@ if [ ! -f "$BASELINE" ]; then
     exit 0
 fi
 
-WATCH_OUT=$("$AUDIT" watchdog --input "$MERGED" --baseline "$BASELINE" 2>&1)
+WATCH_OUT=$("$AUDIT" watchdog --input "$MERGED" --baseline "$BASELINE" --history "$REPORT_DIR/drift-history.json" 2>&1)
 WATCH_RC=$?
 
 # 更新基线为今天（滚动基线：漂移对比的是昨天）
