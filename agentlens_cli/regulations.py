@@ -570,13 +570,17 @@ def map_finding(finding: dict, layer: str = None) -> dict:
     - 完全未知（无 override 且 layer 未知）→ 保持 manual review，不硬塞
     """
     title = str(finding.get("title") or "")
-    refs = _lookup_regulations(title)
+    refs = list(_lookup_regulations(title))  # 复制，避免污染静态表/annotations 共享引用
 
     owasp_refs = OWASP_TITLE_OVERRIDES.get(title)
     if owasp_refs is None and layer in OWASP_LAYER_FALLBACK:
         owasp_refs = OWASP_LAYER_FALLBACK[layer]
 
     if owasp_refs:
+        if OWASP_TITLE_OVERRIDES.get(title) is not None:
+            # 精确 title override 提供完整合规语义：移除主映射的 unknown 打底，
+            # 避免「有 OWASP 精确覆盖却仍报未映射」的噪音（人工标注的非 unknown 条目保留）
+            refs = [r for r in refs if r.get("regulation") != "unknown"]
         existing_keys = {
             (r.get("regulation"), r.get("article"), r.get("clause"), r.get("note", ""))
             for r in refs

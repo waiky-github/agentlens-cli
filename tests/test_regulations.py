@@ -254,6 +254,34 @@ class TestOWASPMapping:
         refs = map_finding({"title": "weird unknown title"}, layer="cost")["regulation_refs"]
         assert any("OWASP" in r.get("regulation", "") for r in refs)
         assert any(r.get("article") == "LLM06" for r in refs)
+        # layer fallback 是弱映射：unknown 打底保留（提示人工复核）
+        assert any(r.get("regulation") == "unknown" for r in refs)
+
+    def test_precise_override_drops_unknown_stub(self):
+        """Precise title override must NOT keep the unknown stub — override provides full compliance semantics."""
+        refs = map_finding({"title": "LARGE_OUTPUT_CONTEXT_EXPOSURE_SUSPECTED"})["regulation_refs"]
+        assert not any(r.get("regulation") == "unknown" for r in refs), f"unknown stub leaked: {refs}"
+        owasp = [r for r in refs if "OWASP Top 10 for LLM" in r["regulation"]]
+        assert any(r["article"] == "LLM08" for r in owasp), f"expected LLM08, got: {owasp}"
+        assert any(r["article"] == "LLM06" for r in owasp), f"expected LLM06, got: {owasp}"
+
+    def test_precise_override_keeps_manual_annotation(self):
+        """Manual annotation (non-unknown) must survive when precise OWASP override also exists."""
+        refs = map_finding({"title": "SYSTEM_PROMPT_LEAKAGE_SUSPECTED"})["regulation_refs"]
+        # 无 unknown 打底
+        assert not any(r.get("regulation") == "unknown" for r in refs)
+        # 仍带 OWASP LLM08
+        assert any(r.get("article") == "LLM08" for r in refs)
+
+    def test_map_finding_does_not_pollute_static_table(self):
+        """map_finding must not mutate the shared static REGULATIONS list (copy before append)."""
+        from agentlens_cli.regulations import REGULATIONS
+        sample_title = next(iter(REGULATIONS))
+        before = len(REGULATIONS[sample_title])
+        f1 = map_finding({"title": sample_title}, layer="graph")
+        f2 = map_finding({"title": sample_title}, layer="graph")
+        assert len(REGULATIONS[sample_title]) == before, "static REGULATIONS list was mutated"
+        assert len(f1["regulation_refs"]) == len(f2["regulation_refs"]), "repeat mapping differs"
 
     def test_all_layers_have_owasp_after_map(self):
         """After map_all_layers on a real audit, every finding should carry OWASP/ACS refs."""
