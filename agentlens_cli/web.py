@@ -2446,13 +2446,16 @@ def _build_fix_track_page() -> str:
     for entry in reversed(fixed_list):
         key = entry.get("key", "")
         layer, title = _decode_finding_key(key)
+        history = entry.get("recheck_history", [])
+        hist_txt = " → ".join(h.get("result", "") for h in history[-3:]) if history else "-"
         tracking_rows.append(
             f'<tr>'
             f'<td>{title[:50]}{"…" if len(title) > 50 else ""}</td>'
             f'<td>{layer}</td>'
-            f'<td>{_status_badge(entry.get("status", ""))}</td>'
+            f'<td>{_status_badge(entry.get("status", ""))}{_verify_badge(entry)}</td>'
             f'<td>{entry.get("marked_at", entry.get("rechecked_at", "-"))}</td>'
             f'<td>{entry.get("note", "-")}</td>'
+            f'<td class="verify-hist">{hist_txt}</td>'
             f'</tr>'
         )
 
@@ -2474,8 +2477,10 @@ def _build_fix_track_page() -> str:
         f'</tr></thead><tbody>{"".join(rows) if rows else "<tr><td colspan=6 class=empty>暂无发现</td></tr>"}'
         f'</tbody></table></div>'
         f'<div class="card"><h2>📋 修复跟踪记录</h2>'
-        + (f'<table><thead><tr><th>标题</th><th>层</th><th>状态</th><th>时间</th><th>备注</th></tr></thead>'
-           f'<tbody>{"".join(tracking_rows) if tracking_rows else "<tr><td colspan=5 class=empty>暂无记录</td></tr>"}'
+        f'<p style="font-size:12px;color:#888;margin-bottom:8px">验证状态：连续缺席 '
+        f'{VERIFY_STREAK_REQUIRED} 次审计确认修复（✓已验证），期间再次出现即标记回归（回归）。</p>'
+        + (f'<table><thead><tr><th>标题</th><th>层</th><th>状态</th><th>时间</th><th>备注</th><th>验证记录</th></tr></thead>'
+           f'<tbody>{"".join(tracking_rows) if tracking_rows else "<tr><td colspan=6 class=empty>暂无记录</td></tr>"}'
            f'</tbody></table>'
            if tracking_rows else '<p class="empty">暂无修复跟踪记录</p>')
         + '</div>'
