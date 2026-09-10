@@ -263,6 +263,30 @@ REMEDIATIONS: dict[str, list[dict]] = {
             "priority": "medium",
         },
     ],
+    "SYSTEM_PROMPT_LEAKAGE_SUSPECTED": [
+        {
+            "action": "将系统提示视为敏感配置而非访问控制",
+            "detail": "系统提示中不要放置无法泄露的机密信息；机密信息移入访问控制系统，输出层做脱敏检查",
+            "priority": "high",
+        },
+        {
+            "action": "对疑似泄露的系统提示做内容审查与触发源排查",
+            "detail": "排查该输出对应的输入上下文（工具结果/检索文档）是否包含注入内容；修复注入源并限制 agent 输出中引用系统提示",
+            "priority": "high",
+        },
+    ],
+    "LARGE_OUTPUT_CONTEXT_EXPOSURE_SUSPECTED": [
+        {
+            "action": "设置 agent 单次输出上限并告警",
+            "detail": "为 agent 响应设置字符上限（如 8000），超限自动截断并记录；检查超大输出是否整段带出上下文",
+            "priority": "medium",
+        },
+        {
+            "action": "排查超大输出来源",
+            "detail": "确认是正常长文回答还是上下文泄露（系统提示/会话历史被带出）；对输出类工具设置输出截断",
+            "priority": "medium",
+        },
+    ],
 }
 
 # ── Dynamic pattern matching (prefix-based) ───────────────────────────

@@ -14,6 +14,7 @@ from .decision import audit_decisions
 from .evidence import verify_evidence
 from .shadow import detect_shadow_agents
 from .compliance import audit_compliance
+from .leakage import audit_system_prompt_leakage
 from .integrity import build_integrity_block, embed_integrity_meta, verify_report
 from .regulations import map_all_layers, list_regulations
 from .remediation import map_all_layers as map_all_remediations, list_remediations
@@ -375,6 +376,13 @@ def cmd_audit(args):
     # Layer 6: Compliance — Decision Authority
     compliance_data = audit_compliance(events)
 
+    # Layer 7: Hidden Context / System Prompt Leakage (OWASP LLM08 2026)
+    leakage_findings = audit_system_prompt_leakage(events)
+    compliance_findings = compliance_data["findings"] + leakage_findings
+    compliance_summary = compliance_data["summary"]
+    if leakage_findings:
+        compliance_summary = f"{compliance_summary} + {len(leakage_findings)} leakage findings"
+
     total_cost = cost_attribution["total_cost"]
     total_wasted = governance_data["total_est_wasted_cost"]
     avoidable_ratio = round(total_wasted / total_cost, 4) if total_cost > 0 else 0.0
@@ -426,8 +434,8 @@ def cmd_audit(args):
             "findings": shadow_findings,
         },
         "compliance": {
-            "summary": compliance_data["summary"],
-            "findings": compliance_data["findings"],
+            "summary": compliance_summary,
+            "findings": compliance_findings,
             "decision_boundary_model": compliance_data["decision_boundary_model"],
         },
     }
@@ -571,7 +579,7 @@ def _run_audit_for_diff(events: list[dict]) -> dict:
             "findings": shadow_findings,
         },
         "compliance": {
-            "findings": compliance_data["findings"],
+            "findings": compliance_data["findings"] + audit_system_prompt_leakage(events),
         },
     }
 
