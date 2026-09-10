@@ -28,6 +28,8 @@ AgentLens Audit 让任何多 Agent 系统（Hermes / CrewAI / AutoGen / LangGrap
 
 ## 🚀 快速开始
 
+> **新手先看 [docs/QUICKSTART.md](docs/QUICKSTART.md) —— 30 分钟从安装到完整审计报告。**
+
 ```bash
 pip install agentlens-audit
 
