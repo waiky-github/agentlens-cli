@@ -5,6 +5,9 @@
   - cost_analysis(events_path)  : 成本分析（总成本/可避免成本/比例）
   - verify_report(report_path)  : 验报告完整性（防篡改哈希链）
   - list_regulations(title_filter) : 法规映射查询
+  - watchdog_status()           : watchdog 漂移监控状态（基线/最近报告）（2026-09-10）
+  - remediation_lookup(title)   : 查询 finding 的修复建议（2026-09-10）
+  - fix_tracking_status()       : 修复跟踪 + 回归验证状态（2026-09-10）
 
 传输方式:
   stdio（默认）: 标准 MCP 客户端进程内接入
@@ -17,6 +20,7 @@
 import argparse
 import json
 import os
+from pathlib import Path
 
 from mcp.server.mcpserver import MCPServer
 
@@ -26,6 +30,7 @@ from .config import CostModel
 from .governance import detect_waste
 from .integrity import build_integrity_block, verify_report as _verify_report
 from .regulations import list_regulations as _list_regulations
+from .remediation import _lookup_remediations
 
 mcp = MCPServer("agentlens-audit")
 
@@ -136,6 +141,101 @@ def list_regulations(title_filter: str | None = None) -> str:
         return json.dumps(entries, ensure_ascii=False)
     except Exception as exc:
         return json.dumps({"error": f"法规查询失败: {exc}"}, ensure_ascii=False)
+
+
+@mcp.tool()
+def watchdog_status() -> str:
+    """查询 watchdog 漂移监控状态：基线文件是否存在、最近审计报告、基线成本/事件摘要。
+
+    无参数。返回 JSON：baseline_found / baseline（written_at, events, total_cost, findings 数）/
+    latest_report（date, size_bytes）/ reports_total。
+    """
+    report_dir = Path(
+        os.environ.get(
+            "AGENTLENS_REPORT_DIR",
+            os.path.expanduser("~/.hermes/agentlens-reports"),
+        )
+    )
+    info: dict = {}
+    baseline_path = report_dir / "baseline.json"
+    info["baseline_found"] = baseline_path.is_file()
+    if baseline_path.is_file():
+        try:
+            bl = json.loads(baseline_path.read_text(encoding="utf-8"))
+            cost = bl.get("cost", {}) or {}
+            info["baseline"] = {
+                "events": bl.get("events_loaded", 0),
+                "total_cost": cost.get("total_cost", 0.0),
+                "est_waste": cost.get("total_est_wasted_cost", 0.0),
+                "findings": sum(
+                    len(bl.get(layer, {}).get("findings", []))
+                    for layer in ("graph", "decision", "evidence", "cost", "shadow", "compliance")
+                ),
+            }
+        except Exception as e:
+            info["baseline_error"] = str(e)
+    reports = sorted(report_dir.glob("audit-*.html"))
+    if reports:
+        latest = reports[-1]
+        info["latest_report"] = {
+            "date": latest.stem.replace("audit-", ""),
+            "size_bytes": latest.stat().st_size,
+        }
+    info["reports_total"] = len(reports)
+    return json.dumps(info, ensure_ascii=False)
+
+
+@mcp.tool()
+def remediation_lookup(finding_title: str) -> str:
+    """查询指定 finding 标题的修复建议（精确匹配 → 动态前缀 → 通用兜底）。
+
+    参数:
+        finding_title: finding 的标题（如 "APPROVAL_BYPASS_CONFIRMED"）
+    返回 JSON：title / remediations（action, detail, priority 列表）。
+    """
+    try:
+        items = _lookup_remediations(finding_title)
+        return json.dumps({"title": finding_title, "remediations": items}, ensure_ascii=False)
+    except Exception as exc:
+        return json.dumps({"error": f"修复建议查询失败: {exc}"}, ensure_ascii=False)
+
+
+@mcp.tool()
+def fix_tracking_status() -> str:
+    """查询修复跟踪与回归验证状态（fixed-findings.json）。
+
+    无参数。返回 JSON：found / total / by_status / by_verify / entries 摘要
+    （entry 含 key, status, verify_status, marked_at；不含 note 全文，避免无关噪声）。
+    """
+    report_dir = Path(
+        os.environ.get(
+            "AGENTLENS_REPORT_DIR",
+            os.path.expanduser("~/.hermes/agentlens-reports"),
+        )
+    )
+    fixed_path = report_dir / "fixed-findings.json"
+    if not fixed_path.is_file():
+        return json.dumps({"found": False, "message": "无修复跟踪记录（fixed-findings.json 不存在）"}, ensure_ascii=False)
+    try:
+        data = json.loads(fixed_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return json.dumps({"found": False, "error": f"读取失败: {exc}"}, ensure_ascii=False)
+    summary: dict = {"found": True, "total": len(data), "by_status": {}, "by_verify": {}}
+    entries = []
+    for e in data:
+        st = e.get("status", "unknown")
+        vs = e.get("verify_status", "")
+        summary["by_status"][st] = summary["by_status"].get(st, 0) + 1
+        if vs:
+            summary["by_verify"][vs] = summary["by_verify"].get(vs, 0) + 1
+        entries.append({
+            "key": e.get("key", ""),
+            "status": st,
+            "verify_status": vs,
+            "marked_at": e.get("marked_at", ""),
+        })
+    summary["entries"] = entries
+    return json.dumps(summary, ensure_ascii=False)
 
 
 def main():
