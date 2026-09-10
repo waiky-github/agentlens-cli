@@ -760,7 +760,9 @@ def _sidebar_html(active_nav: str = "") -> str:
         ("/", "📊", "仪表盘"),
         ("/reports", "📄", "报告列表"),
         ("/audit", "🔍", "触发审计"),
+        ("/annotate", "🏷", "合规标注"),
         ("/fix-track", "🔧", "修复跟踪"),
+        ("/budget-alerts", "🚨", "预算告警"),
         ("/notify", "🔔", "通知配置"),
         ("/#watchdog", "🛡", "Watchdog"),
     ]
@@ -973,6 +975,22 @@ def _build_dashboard() -> str:
         f'</tbody></table></div>'
     )
 
+    # W3: watchdog 漂移趋势（drift-history.json 每日记录）
+    from .watchdog import load_drift_history
+
+    drift_history = load_drift_history(REPORT_DIR / "drift-history.json")
+    wd_dates = [h.get("date", "") for h in drift_history]
+    wd_high = [h.get("high_total", 0) for h in drift_history]
+    wd_new_high = [h.get("new_high", 0) + h.get("growing_high", 0) for h in drift_history]
+    wd_trends_js = _js({"dates": wd_dates, "high": wd_high, "new_high": wd_new_high})
+    wd_trend_html = (
+        f'<div class="card" id="watchdog-trend"><h2>📈 Watchdog 漂移趋势</h2>'
+        f'<div id="chart-watchdog" class="chart-canvas-sm" style="height:220px"></div>'
+        f'<div id="chart-watchdog-hint" style="display:none;text-align:center;padding:12px;'
+        f'color:var(--text-secondary);font-size:13px">数据积累中 — 每日审计后生成漂移趋势</div>'
+        f'</div>'
+    )
+
     # Latest report summary
     if latest:
         # Try to extract top finding titles
@@ -1051,11 +1069,13 @@ def _build_dashboard() -> str:
         f'</div>'
         + latest_summary
         + watchdog_html
+        + wd_trend_html
         + recent_html
         # ECharts + dashboard init
         + '<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>'
         + '<script>'
         + f'var TRENDS={trends_js};'
+        + f'var WD_TRENDS={wd_trends_js};'
         + '(function(){'
         + 'if(typeof echarts==="undefined"){'
         + '  var boxes=document.querySelectorAll(".chart-canvas,.chart-canvas-sm,.chart-canvas-spark");'
@@ -1131,10 +1151,38 @@ def _build_dashboard() -> str:
         + f'makeSparkline("spark-findings",TRENDS.findings,"#4f8cff");'
         + f'makeSparkline("spark-high",TRENDS.high,"#ef4444");'
         + f'makeSparkline("spark-waste",TRENDS.waste,"#f59e0b");'
+        # W3: Watchdog drift trend chart
+        + 'if(WD_TRENDS.dates.length>0){'
+        + '  var wdEl=document.getElementById("chart-watchdog");'
+        + '  if(wdEl&&typeof echarts!=="undefined"){'
+        + '    var wdChart=echarts.init(wdEl);'
+        + '    wdChart.setOption({'
+        + '      animation:false,'
+        + '      tooltip:{trigger:"axis"},'
+        + '      legend:{top:0,textStyle:{color:"#8b93a7"}},'
+        + '      grid:{left:8,right:30,top:30,bottom:8,containLabel:true},'
+        + '      xAxis:{type:"category",data:WD_TRENDS.dates,axisLabel:{color:"#8b93a7",rotate:30}},'
+        + '      yAxis:['
+        + '        {type:"value",name:"High 数",axisLabel:{color:"#8b93a7"}},'
+        + '        {type:"value",name:"新增",splitLine:{show:false},axisLabel:{color:"#8b93a7"}}'
+        + '      ],'
+        + '      series:['
+        + '        {name:"High 总数",type:"line",data:WD_TRENDS.high,itemStyle:{color:"#ef4444"},'
+        + '          smooth:true,lineStyle:{width:2},symbol:"circle",symbolSize:6},'
+        + '        {name:"新增+增长 High",type:"bar",yAxisIndex:1,data:WD_TRENDS.new_high,'
+        + '          itemStyle:{color:"#f59e0b",borderRadius:[4,4,0,0]}}'
+        + '      ]'
+        + '    });'
+        + '  }'
+        + '}else{'
+        + '  var wdHint=document.getElementById("chart-watchdog-hint");'
+        + '  if(wdHint)wdHint.style.display="block";'
+        + '}'
         # Resize handler
         + 'function resizeAll(){'
         + '  try{trendChart.resize()}catch(e){}'
         + '  try{sevChart.resize()}catch(e){}'
+        + '  try{if(typeof wdChart!=="undefined")wdChart.resize()}catch(e){}'
         + '}'
         + 'window.addEventListener("resize",resizeAll);'
         + '})();'
@@ -2149,6 +2197,77 @@ async def api_budget_alerts(limit: int = 100):
 
 
 # ─────────────────────────────────────────────────────────────────
+# W1: Regulation annotation API
+# ─────────────────────────────────────────────────────────────────
+
+def _collect_finding_titles() -> list[dict]:
+    """Collect unique finding titles from the latest report with their current refs."""
+    from agentlens_cli.regulations import map_finding
+
+    findings = _get_latest_findings()
+    seen = {}
+    for f in findings:
+        title = str(f.get("title") or "")
+        if not title:
+            continue
+        if title not in seen:
+            seen[title] = {"title": title, "count": 0, "severity": f.get("severity", "info"), "refs": []}
+        seen[title]["count"] += 1
+    # 映射合规引用（annotations 优先）
+    for entry in seen.values():
+        mapped = map_finding({"title": entry["title"]})
+        entry["refs"] = mapped.get("regulation_refs", [])
+    return sorted(seen.values(), key=lambda e: -e["count"])
+
+
+@app.get("/api/annotations")
+async def api_annotations():
+    """Return all finding titles from the latest report + current annotation state."""
+    from agentlens_cli.regulations import list_annotations
+
+    return {
+        "annotations": list_annotations(),
+        "findings": _collect_finding_titles(),
+    }
+
+
+@app.post("/api/annotations")
+async def api_annotations_add(request: Request):
+    """Add/update a manual regulation annotation. Body: {title, regulation, article, note}."""
+    from agentlens_cli.regulations import add_annotation
+
+    try:
+        body = await request.json()
+    except Exception:
+        return {"status": "error", "detail": "invalid JSON body"}
+    title = str(body.get("title") or "").strip()
+    regulation = str(body.get("regulation") or "").strip()
+    if not title:
+        return {"status": "error", "detail": "title required"}
+    if not regulation:
+        return {"status": "error", "detail": "regulation required"}
+    refs = add_annotation(
+        title,
+        regulation,
+        str(body.get("article") or "").strip(),
+        str(body.get("note") or "manual annotation").strip(),
+    )
+    return {"status": "ok", "title": title, "refs": refs}
+
+
+@app.delete("/api/annotations")
+async def api_annotations_delete(title: str = ""):
+    """Remove a manual annotation for a title."""
+    from agentlens_cli.regulations import remove_annotation
+
+    title = title.strip()
+    if not title:
+        return {"status": "error", "detail": "title required"}
+    removed = remove_annotation(title)
+    return {"status": "ok" if removed else "not-found", "title": title, "removed": removed}
+
+
+# ─────────────────────────────────────────────────────────────────
 # P2-1: Fix tracking API
 # ─────────────────────────────────────────────────────────────────
 
@@ -2784,6 +2903,203 @@ def _build_notify_page() -> str:
     )
 
 
+def _build_annotate_page() -> str:
+    """合规标注页：列出最新报告的 finding title，支持人工标注/覆盖/清除合规映射。"""
+    content = (
+        '<div class="card"><h2>🏷 合规标注</h2>'
+        '<p style="font-size:13px;color:var(--text-secondary);margin-bottom:12px">'
+        '人工标注优先于静态映射表，用于补充/纠正自动合规映射（写 annotations.json）。'
+        '标注后重新审计或查看报告即生效。</p>'
+        '<div style="display:flex;gap:8px;margin-bottom:12px">'
+        '<input type="text" id="ann-search" placeholder="搜索 finding 标题…" '
+        'style="flex:1;padding:8px;background:var(--bg-input);border:1px solid var(--border);'
+        'border-radius:6px;color:var(--text-primary)" oninput="filterAnns()">'
+        '<select id="ann-filter" onchange="filterAnns()" style="padding:8px;background:var(--bg-input);'
+        'border:1px solid var(--border);border-radius:6px;color:var(--text-primary)">'
+        '<option value="">全部</option><option value="annotated">已标注</option>'
+        '<option value="unknown">映射为 unknown</option><option value="mapped">已映射</option>'
+        '</select></div>'
+        '<table id="ann-table"><thead><tr>'
+        '<th style="width:36%">Finding 标题</th><th>出现</th><th>严重度</th>'
+        '<th>当前合规映射</th><th style="width:120px">操作</th>'
+        '</tr></thead><tbody>'
+        '<tr><td colspan="5" class="empty">加载中…</td></tr>'
+        '</tbody></table>'
+        '<div id="ann-empty" style="display:none" class="empty">暂无 finding（先触发一次审计生成报告）</div>'
+        '</div>'
+        # Modal
+        '<div id="ann-modal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;'
+        'background:rgba(0,0,0,0.6);z-index:1000;align-items:center;justify-content:center">'
+        '<div style="background:var(--bg-panel);border:1px solid var(--border);border-radius:8px;'
+        'padding:24px;min-width:440px;max-width:560px">'
+        '<h3 style="margin-bottom:12px">合规标注</h3>'
+        '<div class="form-group"><label>Finding 标题</label>'
+        '<input type="text" id="ann-title" readonly style="width:100%;padding:8px;background:var(--bg-input);'
+        'border:1px solid var(--border);border-radius:6px;color:var(--text-secondary)"></div>'
+        '<div class="form-group"><label>法规（必填）</label>'
+        '<input type="text" id="ann-regulation" placeholder="例如: 网信办《智能体规范应用与创新发展实施意见》" '
+        'style="width:100%;padding:8px;background:var(--bg-input);border:1px solid var(--border);'
+        'border-radius:6px;color:var(--text-primary)"></div>'
+        '<div class="form-group"><label>条款 / 文章（可选）</label>'
+        '<input type="text" id="ann-article" placeholder="例如: 内生安全-成本计量 / LLM08 / Art. 99" '
+        'style="width:100%;padding:8px;background:var(--bg-input);border:1px solid var(--border);'
+        'border-radius:6px;color:var(--text-primary)"></div>'
+        '<div class="form-group"><label>备注（可选）</label>'
+        '<input type="text" id="ann-note" placeholder="例如: 人工判定" '
+        'style="width:100%;padding:8px;background:var(--bg-input);border:1px solid var(--border);'
+        'border-radius:6px;color:var(--text-primary)"></div>'
+        '<div style="display:flex;gap:8px;justify-content:flex-end">'
+        '<button class="btn btn-ghost" onclick="annClose()">取消</button>'
+        '<button class="btn btn-primary" id="ann-confirm-btn" onclick="annConfirm()">保存标注</button>'
+        '</div></div></div>'
+        + '<script>'
+        'var ANN=[];'
+        'async function loadAnns(){'
+        '  try{'
+        '    var resp=await fetch("/api/annotations");'
+        '    var data=await resp.json();'
+        '    ANN=data.findings||[];'
+        '    renderAnns();'
+        '  }catch(e){'
+        '    document.querySelector("#ann-table tbody").innerHTML='
+        '      "<tr><td colspan=5 class=empty>加载失败: "+e.message+"</td></tr>";'
+        '  }'
+        '}'
+        'function renderAnns(){'
+        '  var q=document.getElementById("ann-search").value.trim().toLowerCase();'
+        '  var f=document.getElementById("ann-filter").value;'
+        '  var rows="";'
+        '  var shown=0;'
+        '  ANN.forEach(function(e){'
+        '    var title=e.title||"";'
+        '    var hasUnknown=e.refs.some(function(r){return r.regulation==="unknown"});'
+        '    var isAnnotated=e.refs.some(function(r){return r.note==="manual annotation"||r.note!=="manual review required"});'
+        '    if(q&&!title.toLowerCase().includes(q))return;'
+        '    if(f==="annotated"&&!isAnnotated)return;'
+        '    if(f==="unknown"&&!hasUnknown)return;'
+        '    if(f==="mapped"&&hasUnknown)return;'
+        '    shown++;'
+        '    var refsHtml=e.refs.length?e.refs.map(function(r){'
+        '      var cls=r.regulation==="unknown"?"sev-medium":"badge-ok";'
+        '      return "<span class=\'badge "+cls+"\'>"+r.regulation+" "+(r.article||"")+"</span>";'
+        '    }).join(" "):"—";'
+        '    var sevMap={"high":"sev-high","medium":"sev-medium","low":"sev-low","info":"sev-info"};'
+        '    var safeTitle=title.replace(/\\"/g,"&quot;").replace(/</g,"&lt;");'
+        '    rows+="<tr><td title=\\""+safeTitle+"\\">"+(title.length>70?title.slice(0,70)+"…":title)+"</td>"'
+        '      +"<td class=num>"+e.count+"</td>"'
+        '      +"<td><span class=\""+(sevMap[e.severity]||"sev-info")+"\">"+(e.severity||"info")+"</span></td>"'
+        '      +"<td>"+refsHtml+"</td>"'
+        '      +"<td><button class=\'btn btn-sm btn-primary\' onclick=\'annOpen("+JSON.stringify(title)+")\'>标注</button>"'
+        '      +"<button class=\'btn btn-sm btn-ghost\' style=\'margin-left:4px\' onclick=\'annClear("+JSON.stringify(title)+")\'>清除</button></td></tr>";'
+        '  });'
+        '  var tb=document.querySelector("#ann-table tbody");'
+        '  tb.innerHTML=shown?rows:"<tr><td colspan=5 class=empty>无匹配</td></tr>";'
+        '  document.getElementById("ann-empty").style.display=ANN.length?"none":"block";'
+        '}'
+        'function filterAnns(){renderAnns()}'
+        'var currentAnnTitle="";'
+        'function annOpen(title){'
+        '  currentAnnTitle=title;'
+        '  document.getElementById("ann-title").value=title;'
+        '  document.getElementById("ann-regulation").value="";'
+        '  document.getElementById("ann-article").value="";'
+        '  document.getElementById("ann-note").value="人工标注";'
+        '  document.getElementById("ann-modal").style.display="flex";'
+        '  document.getElementById("ann-regulation").focus();'
+        '}'
+        'function annClose(){'
+        '  document.getElementById("ann-modal").style.display="none";'
+        '  currentAnnTitle="";'
+        '}'
+        'async function annConfirm(){'
+        '  var regulation=document.getElementById("ann-regulation").value.trim();'
+        '  if(!regulation){alert("法规不能为空");return}'
+        '  var btn=document.getElementById("ann-confirm-btn");'
+        '  btn.disabled=true;btn.textContent="提交中…";'
+        '  try{'
+        '    var resp=await fetch("/api/annotations",{'
+        '      method:"POST",'
+        '      headers:{"Content-Type":"application/json"},'
+        '      body:JSON.stringify({'
+        '        title:currentAnnTitle,'
+        '        regulation:regulation,'
+        '        article:document.getElementById("ann-article").value.trim(),'
+        '        note:document.getElementById("ann-note").value.trim()'
+        '      })'
+        '    });'
+        '    if(resp.ok){annClose();loadAnns()}'
+        '    else{var err=await resp.json();alert("保存失败: "+(err.detail||"未知错误"))}'
+        '  }catch(e){alert("请求失败: "+e.message)}'
+        '  finally{btn.disabled=false;btn.textContent="保存标注"}'
+        '}'
+        'async function annClear(title){'
+        '  if(!confirm("清除该标题的人工标注？"))return;'
+        '  try{'
+        '    var resp=await fetch("/api/annotations?title="+encodeURIComponent(title),{method:"DELETE"});'
+        '    if(resp.ok){loadAnns()}else{alert("清除失败")}'
+        '  }catch(e){alert("请求失败: "+e.message)}'
+        '}'
+        'loadAnns();'
+        '</script>'
+    )
+    return _base_page(
+        "合规标注", content, active_nav="/annotate",
+        topbar_title="合规标注",
+    )
+
+
+def _build_budget_alerts_page() -> str:
+    """预算告警页：展示成本预算告警历史（budget-alerts.json）。"""
+    content = (
+        '<div class="card"><h2>🚨 预算告警历史</h2>'
+        '<p style="font-size:13px;color:var(--text-secondary);margin-bottom:12px">'
+        '每次审计超阈值触发的成本告警记录（新在前）。'
+        '阈值配置在 notify-config.json 的 budget 字段；未触发过则列表为空。</p>'
+        '<table id="budget-table"><thead><tr>'
+        '<th>时间</th><th>事件数</th><th>总成本</th><th>预估浪费</th>'
+        '<th>可避免占比</th><th>超限项</th>'
+        '</tr></thead><tbody>'
+        '<tr><td colspan="6" class="empty">加载中…</td></tr>'
+        '</tbody></table>'
+        '<div id="budget-empty" style="display:none" class="empty">暂无告警记录 — 成本在预算内或未配置预算阈值</div>'
+        '</div>'
+        + '<script>'
+        'async function loadBudget(){'
+        '  try{'
+        '    var resp=await fetch("/api/budget/alerts?limit=200");'
+        '    var data=await resp.json();'
+        '    var rows="";'
+        '    (data.history||[]).forEach(function(h){'
+        '      var alerts=h.alerts||[];'
+        '      var alertsHtml=alerts.length?alerts.map(function(a){'
+        '        return "<span class=\'badge badge-warn\'>"+(a.kind==="total_cost"?"总成本":"浪费")'
+        '          +" "+a.actual.toFixed(2)+"/"+a.limit+"</span>";'
+        '      }).join(" "):"—";'
+        '      var ts=(h.timestamp||"").replace("T"," ").slice(0,19);'
+        '      rows+="<tr><td>"+ts+"</td><td class=num>"+(h.events_loaded||0)+"</td>"'
+        '        +"<td class=num>"+(h.total_cost||0).toFixed(2)+"</td>"'
+        '        +"<td class=num>"+(h.est_waste||0).toFixed(2)+"</td>"'
+        '        +"<td class=num>"+((h.avoidable_ratio||0)*100).toFixed(1)+"%</td>"'
+        '        +"<td>"+alertsHtml+"</td></tr>";'
+        '    });'
+        '    var tb=document.querySelector("#budget-table tbody");'
+        '    tb.innerHTML=rows||"<tr><td colspan=6 class=empty>暂无记录</td></tr>";'
+        '    document.getElementById("budget-empty").style.display='
+        '      (data.history||[]).length?"none":"block";'
+        '  }catch(e){'
+        '    document.querySelector("#budget-table tbody").innerHTML='
+        '      "<tr><td colspan=6 class=empty>加载失败: "+e.message+"</td></tr>";'
+        '  }'
+        '}'
+        'loadBudget();'
+        '</script>'
+    )
+    return _base_page(
+        "预算告警", content, active_nav="/budget-alerts",
+        topbar_title="预算告警",
+    )
+
+
 # ─────────────────────────────────────────────────────────────────
 # Pages: HTML UI
 # ─────────────────────────────────────────────────────────────────
@@ -2834,6 +3150,18 @@ async def page_report_detail(date: str):
 async def page_fix_track():
     """Fix tracking page: findings status table and tracking history."""
     return _build_fix_track_page()
+
+
+@app.get("/annotate", response_class=HTMLResponse)
+async def page_annotate():
+    """合规标注页：人工标注/覆盖/清除 finding 的合规映射。"""
+    return _build_annotate_page()
+
+
+@app.get("/budget-alerts", response_class=HTMLResponse)
+async def page_budget_alerts():
+    """预算告警页：展示成本预算告警历史。"""
+    return _build_budget_alerts_page()
 
 
 @app.get("/notify", response_class=HTMLResponse)

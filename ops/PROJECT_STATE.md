@@ -39,6 +39,7 @@
   - **任务2 系统提示泄露检测**（00ac99b）：leakage.py——内容级检测（强标记单命中/弱标记≥2 → high SYSTEM_PROMPT_LEAKAGE_SUSPECTED，OWASP LLM08）+ 元数据级超大输出弱信号（info LARGE_OUTPUT_CONTEXT_EXPOSURE_SUSPECTED）；**脱敏纪律**：Hermes 事件流无正文（转换器脱敏）→ 默认只出 info 弱信号不误报；集成 audit + diff 两路径（并入 compliance 层）+ regulations/remediation 双映射
   - **任务3 修复回归验证**（0655414+UI）：_recheck_fixed_findings 状态机——连续 VERIFY_STREAK_REQUIRED(3) 次审计缺席才 closed+verified，期间再次出现（含 closed 后）→ reopened+regressed；条目带 absent_streak + recheck_history；新 API /api/findings/verification + 修复跟踪页徽章（✓已验证/回归/验证中 N/3）+ 验证历史列
   - **任务4 成本预算告警**（c0b3e0a）：budget.py——check_budget 检查总成本/预估浪费超阈值（notify-config.json 的 budget 字段，默认关闭零侵入）；集成 web.py audit run（报告后解析 cost → 超阈值 send_notify，task_entry 记 budget_alert）；webhook 本地监听端到端验证通过
+  - **Web 平台化 W1/W2/W3**（2026-09-10）：W1 合规标注页 `/annotate`（GET/POST/DELETE /api/annotations + 标注 modal，人工标注/覆盖/清除写 annotations.json）；W2 预算告警页 `/budget-alerts`（读 budget-alerts.json 历史表格）；W3 仪表盘 Watchdog 漂移趋势图（ECharts 折线 high 总数 + 新增柱，读 drift-history.json）；navigation +3 项
 
 ## 关键事实（避免重踩）
 - **PyPI 包名 `agentlens-cli` 已被他人占用**（发布 403）→ 改名 `agentlens-audit`（2026-09-08 实测 404 可用后发布）
