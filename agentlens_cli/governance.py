@@ -16,7 +16,7 @@ def detect_waste(events: list[dict], cost_model: CostModel = None) -> dict:
     if cost_model is None:
         cost_model = DEFAULT_COST_MODEL
 
-    sorted_events = sorted(events, key=lambda e: e.get("timestamp", ""))
+    sorted_events = sorted(events, key=lambda e: e.get("timestamp") or "")
     findings = []
 
     # Build an ordered list of model_call / tool_invocation events
