@@ -9,7 +9,7 @@ def audit_decisions(events: list[dict]) -> dict:
       2. High-risk action_executed has matching approval (L3 chain)
       3. Approval bypass detection → APPROVAL_BYPASS_CONFIRMED
     """
-    sorted_events = sorted(events, key=lambda e: e.get("timestamp", ""))
+    sorted_events = sorted(events, key=lambda e: e.get("timestamp") or "")
 
     findings = []
     decision_chain = []

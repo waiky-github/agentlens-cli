@@ -22,11 +22,12 @@ def parse_jsonl(path: str) -> Iterator[dict]:
         print(f"[gateway.log parser] skipped {skipped} unparseable lines", flush=True, file=sys.stderr)
 
 
-# Patterns for Hermes gateway.log lines
+# Patterns for Hermes gateway.log / agent.log lines
+# New agent.log format: "tool skill_view completed (0.02s, 31623 chars)"
 _RE_TOOL = re.compile(
-    r".*agent\.tool_executor:\s+tool\s+(\S+)\s+completed.*"
-    r"output_chars[=:\s]*(\d+).*"
-    r"duration[=:\s]*([\d.]+)",
+    r".*agent\.tool_executor:\s+tool\s+(\S+)\s+completed.*?"
+    r"(?:\(([\d.]+)s,\s*(\d+)\s*chars\)"
+    r"|output_chars[=:\s]*(\d+).*?duration[=:\s]*([\d.]+))",
     re.IGNORECASE,
 )
 
@@ -36,10 +37,10 @@ _RE_TOOL_SIMPLE = re.compile(
 )
 
 _RE_MODEL = re.compile(
-    r".*agent\.conversation_loop:\s+API call.*"
-    r"tokens_in[=:\s]*(\d+).*"
-    r"tokens_out[=:\s]*(\d+).*"
-    r"tokens_total[=:\s]*(\d+).*",
+    r".*agent\.conversation_loop:\s+API call.*?"
+    r"(?:tokens_in|in)[=:\s]*(\d+).*?"
+    r"(?:tokens_out|out)[=:\s]*(\d+).*?"
+    r"(?:tokens_total|total)[=:\s]*(\d+).*?",
     re.IGNORECASE,
 )
 
@@ -67,6 +68,18 @@ def _extract_agent_from_line(line: str) -> str:
     return "agent:main"
 
 
+# Matches log-line leading timestamp like "2026-07-20 14:34:07,665 INFO ..."
+_RE_TS = re.compile(r"^(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2})")
+
+
+def _extract_timestamp_from_line(line: str):
+    """Extract ISO-ish timestamp from a log line, or None if absent."""
+    m = _RE_TS.match(line.strip())
+    if m:
+        return m.group(1).replace(" ", "T")
+    return None
+
+
 def parse_gateway_log(path: str) -> Iterator[dict]:
     """Best-effort parse of Hermes gateway.log text into events."""
     skipped = 0
@@ -83,16 +96,24 @@ def parse_gateway_log(path: str) -> Iterator[dict]:
             # Tool invocation
             m = _RE_TOOL.search(stripped)
             if m:
+                # New format: (dur, chars) -> groups 2,3 ; old format: chars,dur -> groups 4,5
+                if m.group(2) is not None:
+                    duration_s, out_chars = m.group(2), m.group(3)
+                else:
+                    duration_s, out_chars = m.group(5), m.group(4)
+                payload = {
+                    "agent": _extract_agent_from_line(stripped),
+                    "tool": m.group(1),
+                }
+                if out_chars is not None:
+                    payload["output_chars"] = int(out_chars)
+                if duration_s is not None:
+                    payload["duration_seconds"] = float(duration_s)
                 evt = {
                     "event_id": f"parsed-evt-{event_id:05d}",
                     "type": "tool_invocation",
                     "source": "hermes:agent:log",
-                    "payload": {
-                        "agent": _extract_agent_from_line(stripped),
-                        "tool": m.group(1),
-                        "output_chars": int(m.group(2)),
-                        "duration_seconds": float(m.group(3)),
-                    },
+                    "payload": payload,
                 }
             else:
                 # Try simpler tool pattern
@@ -160,7 +181,7 @@ def parse_gateway_log(path: str) -> Iterator[dict]:
                 skipped += 1
                 continue
 
-            evt["timestamp"] = None
+            evt["timestamp"] = _extract_timestamp_from_line(stripped)
             evt["evidence_ref"] = f"hermes:log:gateway.log:{line_no}"
             evt["evidence_hash"] = None
             evt["message_summary"] = None

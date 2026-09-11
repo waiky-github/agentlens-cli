@@ -147,7 +147,7 @@ def append_budget_alert(
     }
     history.append(record)
     # 按时间戳排序（最新在后），保留全部历史
-    history.sort(key=lambda h: h.get("timestamp", ""))
+    history.sort(key=lambda h: h.get("timestamp") or "")
     report_dir.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(history, ensure_ascii=False, indent=2), encoding="utf-8")
     return history
@@ -164,7 +164,7 @@ def load_budget_alerts(report_dir: Optional[Path] = None, limit: int = 100) -> l
         loaded = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(loaded, list):
             return []
-        loaded.sort(key=lambda h: h.get("timestamp", ""), reverse=True)
+        loaded.sort(key=lambda h: h.get("timestamp") or "", reverse=True)
         return loaded[:limit]
     except (ValueError, OSError):
         return []

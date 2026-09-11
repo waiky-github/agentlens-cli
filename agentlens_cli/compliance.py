@@ -88,7 +88,7 @@ def audit_compliance(events: list[dict]) -> dict:
     Returns a dict with 'findings' list and 'summary' string.
     """
     findings = []
-    sorted_events = sorted(events, key=lambda e: e.get("timestamp", ""))
+    sorted_events = sorted(events, key=lambda e: e.get("timestamp") or "")
     
     # Check if there's an approval stream at all
     has_approval_stream = any(evt.get("type") == "approval" for evt in events)

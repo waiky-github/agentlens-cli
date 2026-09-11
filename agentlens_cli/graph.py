@@ -8,7 +8,7 @@ def build_graph(events: list[dict]) -> dict:
 
     Returns a dict with nodes, edges, metrics, and data_gaps.
     """
-    sorted_events = sorted(events, key=lambda e: e.get("timestamp", ""))
+    sorted_events = sorted(events, key=lambda e: e.get("timestamp") or "")
 
     nodes = {}
     edges = []

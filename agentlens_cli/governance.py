@@ -176,7 +176,7 @@ def detect_waste(events: list[dict], cost_model: CostModel = None) -> dict:
     # ============================================================
     all_model_calls = sorted(
         [e for e in tool_and_model if e.get("type") == "model_call"],
-        key=lambda e: e.get("timestamp", ""),
+        key=lambda e: e.get("timestamp") or "",
     )
 
     if all_model_calls:
