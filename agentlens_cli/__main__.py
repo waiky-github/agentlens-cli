@@ -214,12 +214,12 @@ def build_cmd_cost(subparsers):
         help="Output results as JSON (default: human-readable text)",
     )
     p.add_argument(
-        "--input-price", type=float, default=2.4,
-        help="Input token price per 1M tokens (default: 2.4 CNY)",
+        "--input-price", type=float, default=3.0,
+        help="Input token price per 1M tokens (default: 3.0 CNY)",
     )
     p.add_argument(
-        "--output-price", type=float, default=8.0,
-        help="Output token price per 1M tokens (default: 8.0 CNY)",
+        "--output-price", type=float, default=9.0,
+        help="Output token price per 1M tokens (default: 9.0 CNY)",
     )
     p.set_defaults(func=cmd_cost)
 
@@ -244,12 +244,12 @@ def build_cmd_audit(subparsers):
         help="Write output to file (default: stdout)",
     )
     p.add_argument(
-        "--input-price", type=float, default=2.4,
-        help="Input token price per 1M tokens (default: 2.4 CNY)",
+        "--input-price", type=float, default=3.0,
+        help="Input token price per 1M tokens (default: 3.0 CNY)",
     )
     p.add_argument(
-        "--output-price", type=float, default=8.0,
-        help="Output token price per 1M tokens (default: 8.0 CNY)",
+        "--output-price", type=float, default=9.0,
+        help="Output token price per 1M tokens (default: 9.0 CNY)",
     )
     p.add_argument(
         "--known-agents", default=None,

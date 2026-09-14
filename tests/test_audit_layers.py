@@ -324,26 +324,26 @@ class TestHermesGateway:
 
 class TestCostModel:
     def test_cost_model_creation(self):
-        cm = CostModel(input_price=2.4, output_price=8.0)
-        assert cm.input_price == 2.4
-        assert cm.output_price == 8.0
+        cm = CostModel(input_price=3.0, output_price=9.0)
+        assert cm.input_price == 3.0
+        assert cm.output_price == 9.0
 
     def test_cost_model_input_cost(self):
-        cm = CostModel(input_price=2.4, output_price=8.0)
-        assert cm.input_cost(1_000_000) == 2.4
-        assert cm.input_cost(500_000) == 1.2
+        cm = CostModel(input_price=3.0, output_price=9.0)
+        assert cm.input_cost(1_000_000) == 3.0
+        assert cm.input_cost(500_000) == 1.5
 
     def test_cost_model_output_cost(self):
-        cm = CostModel(input_price=2.4, output_price=8.0)
-        assert cm.output_cost(1_000_000) == 8.0
+        cm = CostModel(input_price=3.0, output_price=9.0)
+        assert cm.output_cost(1_000_000) == 9.0
 
     def test_cost_model_total_cost(self):
-        cm = CostModel(input_price=2.4, output_price=8.0)
-        assert cm.total_cost(1_000_000, 500_000) == 2.4 + 4.0
+        cm = CostModel(input_price=3.0, output_price=9.0)
+        assert cm.total_cost(1_000_000, 500_000) == 3.0 + 4.5
 
     def test_cost_model_to_dict(self):
         cm = CostModel()
         d = cm.to_dict()
-        assert d["input_price_per_1m"] == 2.4
-        assert d["output_price_per_1m"] == 8.0
+        assert d["input_price_per_1m"] == 3.0
+        assert d["output_price_per_1m"] == 9.0
         assert d["currency"] == "CNY"

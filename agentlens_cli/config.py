@@ -4,7 +4,7 @@
 class CostModel:
     """Token pricing model. All prices are per 1M tokens."""
 
-    def __init__(self, input_price: float = 2.4, output_price: float = 8.0):
+    def __init__(self, input_price: float = 3.0, output_price: float = 9.0):
         self.input_price = input_price
         self.output_price = output_price
 
