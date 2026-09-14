@@ -174,7 +174,3 @@ python -m pytest tests/ -v   # 246 tests green
 - PyPI: https://pypi.org/project/agentlens-audit/
 - GitHub: https://github.com/waiky-github/agentlens-cli
 - License: MIT
-
-## 🙏 Credits
-
-The audit methodology originates from AgentLens (GOAI New Intelligence Infrastructure track entry); rule implementations reference its cost-governance / decision-audit / evidence-chain / graph-merge SKILL definitions.

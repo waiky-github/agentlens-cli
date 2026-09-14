@@ -195,7 +195,3 @@ python -m agentlens_cli.mcp_server --transport http --port 8765 --host 127.0.0.1
 | `watchdog_status` | Watchdog 基线状态（基线事件数 / 报告数） |
 | `remediation_lookup` | 修复建议查询（按 finding title） |
 | `fix_tracking_status` | 修复跟踪状态（verified / verifying / regressed） |
-
-## 🙏 致谢
-
-审计方法论源自 AgentLens（GOAI 新智基座赛道参赛作品），规则实现参考其 cost-governance / decision-audit / evidence-chain / graph-merge 等 SKILL 定义。
