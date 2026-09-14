@@ -99,7 +99,7 @@ agentlens-audit watchdog --input events.jsonl --baseline baseline.json --history
 
 ## 📥 支持的输入
 
-- **Hermes**：gateway.log 直接解析
+- **Hermes**：gateway.log 直接解析（协作/流程审计）；agent.log 直接解析（成本/调用明细，兼容新旧日志格式）
 - **CrewAI / AutoGen / LangGraph**：日志/追踪 → 统一事件流（见 `converters/`）
 - **统一事件流 JSONL**：`{type, timestamp, source, payload, evidence_ref, event_id}`
 
@@ -114,7 +114,7 @@ agentlens-audit watchdog --input events.jsonl --baseline baseline.json --history
 - `budget`：成本预算告警（超阈值走 notify 通道）
 - `--gate`：CI 退出码
 
-## 🌐 Web 服务（0.3.0）
+## 🌐 Web 服务
 
 内置 FastAPI Web 平台：仪表盘 KPI + 趋势图、报告列表/详情/对比、触发审计、修复跟踪（标记已修复 + 回归验证）、合规标注、预算告警历史、Watchdog 漂移趋势图。
 

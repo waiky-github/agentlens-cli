@@ -17,7 +17,7 @@ pip install agentlens-audit
 验证安装：
 
 ```bash
-agentlens-audit --version   # 期望输出 0.3.0
+agentlens-audit --version   # 期望输出 0.3.1
 ```
 
 ## 第 2 步：最快看到效果 — 一键演示报告（3 分钟）

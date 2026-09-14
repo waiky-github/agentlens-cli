@@ -150,7 +150,7 @@ python -m agentlens_cli.mcp_server --transport http --port 8765 --host 127.0.0.1
 | `remediation_lookup` | Remediation lookup (by finding title) |
 | `fix_tracking_status` | Fix tracking status (verified / verifying / regressed) |
 
-## 🌐 Web Platform (0.3.0)
+## 🌐 Web Platform
 
 Built-in FastAPI web platform: dashboard KPIs + trend charts, report list/detail/compare, trigger audit, fix tracking (mark-fixed + regression verification), compliance annotation, budget alert history, Watchdog drift trend chart.
 

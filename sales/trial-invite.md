@@ -30,7 +30,7 @@ agentlens-audit demo --output report.html
 
 【团队名】您好，
 
-我们在做一个开源工具 **AgentLens Audit**（GitHub: waiky-github/agentlens-cli，PyPI: agentlens-audit 0.3.0），想邀请贵团队参与种子用户试用。
+我们在做一个开源工具 **AgentLens Audit**（GitHub: waiky-github/agentlens-cli，PyPI: agentlens-audit 0.3.1），想邀请贵团队参与种子用户试用。
 
 **它解决什么问题**
 

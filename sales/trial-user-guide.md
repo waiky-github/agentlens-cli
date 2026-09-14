@@ -24,7 +24,7 @@ pip install agentlens-audit
 验证：
 
 ```bash
-agentlens-audit --version   # 看到 0.3.0 就对了
+agentlens-audit --version   # 看到 0.3.1 就对了
 ```
 
 ## 3. 30 秒看效果（demo）

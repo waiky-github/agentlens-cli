@@ -1,6 +1,6 @@
 # agentlens-audit 产品一页纸
 
-> **版本 0.3.0 | PyPI 已发布 | GitHub: waiky-github/agentlens-cli**
+> **版本 0.3.1 | PyPI 已发布 | GitHub: waiky-github/agentlens-cli**
 
 ---
 
@@ -107,4 +107,4 @@ agentlens-audit audit --input events.jsonl --gate
 
 - **开源地址**：https://github.com/waiky-github/agentlens-cli
 - **PyPI**：`pip install agentlens-audit`
-- **版本**：0.3.0
+- **版本**：0.3.1
