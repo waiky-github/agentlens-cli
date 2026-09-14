@@ -84,7 +84,7 @@ agentlens-audit watchdog --input events.jsonl --baseline baseline.json
 
 ## 📥 Supported Inputs
 
-- **Hermes**: parse `gateway.log` directly
+- **Hermes**: parse `gateway.log` directly (collaboration/flow audit); parse `agent.log` for cost/call details (new & old log formats)
 - **CrewAI / AutoGen / LangGraph**: logs/traces → unified event stream (see `converters/`)
 - **Unified event-stream JSONL**: `{type, timestamp, source, payload, evidence_ref, event_id}`
 
