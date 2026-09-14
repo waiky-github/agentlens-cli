@@ -8,7 +8,7 @@ import tempfile
 from pathlib import Path
 
 
-PYTHON = "/home/agentuser/.hermes/hermes-agent/venv/bin/python"
+PYTHON = sys.executable
 PKG_DIR = Path(__file__).resolve().parent.parent
 
 

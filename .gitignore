@@ -17,3 +17,8 @@ venv/
 # Runtime data (not to be committed)
 notify-config.json
 fixed-findings.json
+
+# 内部运维（不进公开仓库）
+ops/
+scripts/
+agentlens-internal/

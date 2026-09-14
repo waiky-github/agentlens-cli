@@ -820,7 +820,7 @@ def cmd_demo(args):
     map_all_layers(result)
     map_all_remediations(result)
 
-    html = render_html(result, demo_input)
+    html = render_html(result, os.path.basename(demo_input))
     from .integrity import hash_content
     integrity = build_integrity_block(result, None, hash_content(html))
     html = embed_integrity_meta(html, integrity)

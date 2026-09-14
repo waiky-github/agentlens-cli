@@ -9,10 +9,8 @@ import pytest
 fastapi = pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient  # noqa: E402
 
-# Override REPORT_DIR for tests before importing web module
-os.environ["AGENTLENS_REPORT_DIR"] = str(
-    Path("/home/agentuser/.hermes/agentlens-reports")
-)
+# REPORT_DIR env is set by tests/conftest.py (pytest_configure) before any
+# module import — shared by test_web and test_verification.
 
 from agentlens_cli.web import app  # noqa: E402
 
@@ -100,7 +98,7 @@ class TestApiAudit:
 
     def test_audit_run_with_valid_input(self):
         import tempfile
-        input_path = "/home/agentuser/agentlens-cli/examples/hermes_gateway_events_anon.jsonl"
+        input_path = str(Path(__file__).resolve().parent.parent / "examples" / "hermes_gateway_events_anon.jsonl")
         # Use a temp output to avoid polluting the real report dir
         with tempfile.NamedTemporaryFile(suffix=".html", delete=True) as f:
             resp = client.post(

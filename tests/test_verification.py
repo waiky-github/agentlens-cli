@@ -8,16 +8,14 @@ import json
 import os
 import sys
 from pathlib import Path
+import tempfile
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-# 与 test_web.py 保持一致：import web 前设置 REPORT_DIR env（pytest 按字母序收集，
-# 本文件可能先于 test_web 导入 web 模块，必须用相同的 env 避免模块级 REPORT_DIR 分叉）
-os.environ["AGENTLENS_REPORT_DIR"] = str(
-    Path("/home/agentuser/.hermes/agentlens-reports")
-)
+# AGENTLENS_REPORT_DIR is set by tests/conftest.py (pytest_configure) before
+# any module import — shared by test_web and test_verification.
 
 fastapi = pytest.importorskip("fastapi")
 from agentlens_cli import web  # noqa: E402
