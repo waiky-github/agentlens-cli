@@ -293,7 +293,9 @@ class TestConvertAgentLogGeneral:
         try:
             events = _convert.convert(tmp)
             evt = events[0]
-            assert evt["source"].endswith(".log")
+            # 2026-09-15 起 source 用语义化标识 hermes:agent:log（避免影子检测
+            # 把裸文件名误判为未注册智能体），不再是文件路径。
+            assert evt["source"] == "hermes:agent:log"
         finally:
             os.unlink(tmp)
 

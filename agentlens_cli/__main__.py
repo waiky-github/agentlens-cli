@@ -87,8 +87,9 @@ def format_human(cost_data: dict, governance_data: dict) -> str:
         lines.append(f"      tokens_in={data['tokens_in']:,}  tokens_out={data['tokens_out']:,}")
         lines.append(f"      model_calls={data['model_calls']}  tool_calls={data['tool_calls']}")
         lines.append(f"      cost={data['cost']:.6f} CNY")
-    lines.append(f"  Pricing: {cost_data['cost_model']['input_price_per_1m']} CNY/M in, "
-                  f"{cost_data['cost_model']['output_price_per_1m']} CNY/M out")
+    lines.append(f"  Pricing: {cost_data['cost_model']['input_price_per_1m']} CNY/M in "
+                 f"(cache-hit {cost_data['cost_model']['cache_read_price_per_1m']} CNY/M), "
+                 f"{cost_data['cost_model']['output_price_per_1m']} CNY/M out")
 
     # Waste findings
     findings = governance_data["findings"]
@@ -221,6 +222,10 @@ def build_cmd_cost(subparsers):
         "--output-price", type=float, default=9.0,
         help="Output token price per 1M tokens (default: 9.0 CNY)",
     )
+    p.add_argument(
+        "--cache-price", type=float, default=0.10,
+        help="Cache-hit input token price per 1M tokens (default: 0.10 CNY, Volcano Ark deepseek-v4-flash)",
+    )
     p.set_defaults(func=cmd_cost)
 
 
@@ -250,6 +255,10 @@ def build_cmd_audit(subparsers):
     p.add_argument(
         "--output-price", type=float, default=9.0,
         help="Output token price per 1M tokens (default: 9.0 CNY)",
+    )
+    p.add_argument(
+        "--cache-price", type=float, default=0.10,
+        help="Cache-hit input token price per 1M tokens (default: 0.10 CNY, Volcano Ark deepseek-v4-flash)",
     )
     p.add_argument(
         "--known-agents", default=None,
@@ -297,7 +306,11 @@ def cmd_cost(args):
 
     # Build cost model
     from .config import CostModel
-    cost_model = CostModel(input_price=args.input_price, output_price=args.output_price)
+    cost_model = CostModel(
+        input_price=args.input_price,
+        output_price=args.output_price,
+        cache_read_price=args.cache_price,
+    )
 
     # Run attribution
     cost_data = attribute_costs(events, cost_model)
@@ -343,7 +356,11 @@ def cmd_audit(args):
         sys.exit(1)
 
     from .config import CostModel
-    cost_model = CostModel(input_price=args.input_price, output_price=args.output_price)
+    cost_model = CostModel(
+        input_price=args.input_price,
+        output_price=args.output_price,
+        cache_read_price=args.cache_price,
+    )
 
     # Parse --known-agents and --dangerous-tools from CLI args
     known_agents = None

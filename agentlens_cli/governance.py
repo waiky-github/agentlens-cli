@@ -206,13 +206,23 @@ def detect_waste(events: list[dict], cost_model: CostModel = None) -> dict:
                 continue
 
             total_excess = 0
+            total_excess_cache = 0
             for mc in sess[1:]:
                 tokens_in = mc.get("payload", {}).get("tokens_in", 0) or 0
+                cache_hit = mc.get("payload", {}).get("cache_hit", 0) or 0
                 excess = max(0, tokens_in - baseline)
                 total_excess += excess
+                # Excess tokens are billed like any other input; the
+                # cache-hit share of the excess is proportional to the
+                # cache-hit share of the whole call (provider-side prefix
+                # cache covers the stable prefix, so this is approximate).
+                if tokens_in > 0 and excess > 0:
+                    total_excess_cache += round(
+                        excess * min(cache_hit, tokens_in) / tokens_in
+                    )
 
             if total_excess > 100_000:
-                est_wasted_cost = cost_model.input_cost(total_excess)
+                est_wasted_cost = cost_model.input_cost(total_excess, cache_hit=total_excess_cache)
                 findings.append({
                     "severity": "high",
                     "title": "session-level context bloat: no deliberate compaction",

@@ -2,27 +2,44 @@
 
 
 class CostModel:
-    """Token pricing model. All prices are per 1M tokens."""
+    """Token pricing model. All prices are per 1M tokens.
 
-    def __init__(self, input_price: float = 3.0, output_price: float = 9.0):
+    cache_read_price: price for input tokens served from provider-side
+    prompt cache. Default 0.10 CNY/M matches Volcano Ark (火山方舟)
+    deepseek-v4-flash 正式版 cache-hit price (2026-09-15 verified against
+    volcengine model-price docs). Cost attribution applies the discount
+    only when the event payload carries a cache_hit field.
+    """
+
+    def __init__(
+        self,
+        input_price: float = 3.0,
+        output_price: float = 9.0,
+        cache_read_price: float = 0.10,
+    ):
         self.input_price = input_price
         self.output_price = output_price
+        self.cache_read_price = cache_read_price
 
-    def input_cost(self, tokens: int) -> float:
-        return (tokens / 1_000_000) * self.input_price
+    def input_cost(self, tokens: int, cache_hit: int = 0) -> float:
+        """Cost of input tokens; cache_hit (tokens) billed at cache price."""
+        cache_hit = max(0, min(int(cache_hit or 0), tokens))
+        uncached = tokens - cache_hit
+        return (uncached * self.input_price + cache_hit * self.cache_read_price) / 1_000_000
 
     def output_cost(self, tokens: int) -> float:
         return (tokens / 1_000_000) * self.output_price
 
-    def total_cost(self, tokens_in: int, tokens_out: int) -> float:
-        return self.input_cost(tokens_in) + self.output_cost(tokens_out)
+    def total_cost(self, tokens_in: int, tokens_out: int, cache_hit: int = 0) -> float:
+        return self.input_cost(tokens_in, cache_hit) + self.output_cost(tokens_out)
 
     def to_dict(self) -> dict:
         return {
             "input_price_per_1m": self.input_price,
+            "cache_read_price_per_1m": self.cache_read_price,
             "output_price_per_1m": self.output_price,
             "currency": "CNY",
-            "note": "estimate — configurable pricing model",
+            "note": "estimate — configurable pricing model; cache_read 0.10 = Volcano Ark deepseek-v4-flash cache-hit (2026-09-15)",
         }
 
 

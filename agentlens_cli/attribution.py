@@ -38,7 +38,8 @@ def attribute_costs(events: list[dict], cost_model: CostModel = None) -> dict:
             agent = payload.get("agent", "unknown")
             tokens_in = payload.get("tokens_in", 0) or 0
             tokens_out = payload.get("tokens_out", 0) or 0
-            cost = cost_model.total_cost(tokens_in, tokens_out)
+            cache_hit = payload.get("cache_hit", 0) or 0
+            cost = cost_model.total_cost(tokens_in, tokens_out, cache_hit)
 
             agents[agent]["tokens_in"] += tokens_in
             agents[agent]["tokens_out"] += tokens_out

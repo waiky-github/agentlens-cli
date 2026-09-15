@@ -346,4 +346,62 @@ class TestCostModel:
         d = cm.to_dict()
         assert d["input_price_per_1m"] == 3.0
         assert d["output_price_per_1m"] == 9.0
+        assert d["cache_read_price_per_1m"] == 0.10
         assert d["currency"] == "CNY"
+
+    def test_cost_model_cache_discount(self):
+        """Cache-hit tokens are billed at cache_read_price, not full input price."""
+        cm = CostModel(input_price=3.0, output_price=9.0, cache_read_price=0.10)
+        # 1M tokens fully cache-hit → 0.10 CNY, not 3.0
+        assert cm.input_cost(1_000_000, cache_hit=1_000_000) == 0.10
+        # 1M tokens: 400K cached, 600K uncached → 0.6*3.0 + 0.4*0.1 = 1.84
+        assert abs(cm.input_cost(1_000_000, cache_hit=400_000) - 1.84) < 1e-9
+        # No cache_hit → unchanged legacy behavior
+        assert cm.input_cost(1_000_000) == 3.0
+        # cache_hit clamped to tokens (defensive)
+        assert cm.input_cost(500_000, cache_hit=999_999) == 0.05
+        # total_cost with cache
+        assert abs(cm.total_cost(1_000_000, 500_000, cache_hit=1_000_000) - (0.10 + 4.5)) < 1e-9
+
+    def test_attribute_costs_uses_cache_field(self):
+        """attribution should bill cache-hit tokens at discount when payload carries cache_hit."""
+        cm = CostModel(input_price=3.0, output_price=9.0, cache_read_price=0.10)
+        events = [
+            {
+                "type": "model_call",
+                "payload": {
+                    "agent": "test",
+                    "tokens_in": 1_000_000,
+                    "tokens_out": 0,
+                    "cache_hit": 1_000_000,
+                },
+            }
+        ]
+        cost = attribute_costs(events, cm)
+        assert abs(cost["total_cost"] - 0.10) < 1e-9
+
+    def test_bloat_finding_uses_cache_discount(self):
+        """session-level bloat wasted cost should reflect cache discount on excess tokens."""
+        cm = CostModel(input_price=3.0, output_price=9.0, cache_read_price=0.10)
+        # Session of 4 calls: baseline 100K, each later call 300K input with 100% cache hit.
+        events = []
+        for i in range(4):
+            events.append(
+                {
+                    "type": "model_call",
+                    "payload": {
+                        "agent": "test",
+                        "tokens_in": 100_000 if i == 0 else 300_000,
+                        "tokens_out": 0,
+                        "cache_hit": 100_000 if i == 0 else 300_000,
+                    },
+                    "event_id": f"evt-{i}",
+                    "evidence_ref": f"test:{i}",
+                }
+            )
+        waste = detect_waste(events, cm)
+        bloat = [f for f in waste["findings"] if "context bloat" in f["title"]]
+        assert len(bloat) == 1
+        # excess = 3 * 200K = 600K tokens, all cache-hit → 600K * 0.10/M = 0.06 CNY
+        # (vs 600K * 3.0/M = 1.8 CNY without cache discount)
+        assert abs(bloat[0]["est_wasted_cost"] - 0.06) < 1e-6
