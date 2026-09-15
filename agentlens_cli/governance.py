@@ -173,11 +173,23 @@ def detect_waste(events: list[dict], cost_model: CostModel = None) -> dict:
     # context grows with no compaction. A session boundary is
     # detected when tokens_in drops > 50% (context reset).
     # The waste is the excess tokens above the session baseline.
+    #
+    # Compaction-aware (2026-09-15): context_compression events from
+    # the converter are matched to each session segment so findings
+    # can distinguish "never compacted" (config off / threshold too
+    # high) from "compacted but still bloated" (threshold too late).
     # ============================================================
     all_model_calls = sorted(
         [e for e in tool_and_model if e.get("type") == "model_call"],
         key=lambda e: e.get("timestamp") or "",
     )
+
+    # 压缩事件（started/done），按时间戳排序，用于会话段归因
+    compressions = sorted(
+        [e for e in sorted_events if e.get("type") == "context_compression"],
+        key=lambda e: e.get("timestamp") or "",
+    )
+    compression_ts = [e.get("timestamp") or "" for e in compressions]
 
     if all_model_calls:
         # Group model calls into sessions by detecting context resets
@@ -223,6 +235,26 @@ def detect_waste(events: list[dict], cost_model: CostModel = None) -> dict:
 
             if total_excess > 100_000:
                 est_wasted_cost = cost_model.input_cost(total_excess, cache_hit=total_excess_cache)
+
+                # 会话段内压缩次数（压缩事件时间戳落在段 [first, last] 闭区间内）
+                s_ts0 = sess[0].get("timestamp") or ""
+                s_ts1 = sess[-1].get("timestamp") or ""
+                n_comp = 0
+                if compression_ts and s_ts0 and s_ts1:
+                    n_comp = sum(1 for c in compression_ts if s_ts0 <= c <= s_ts1)
+
+                if n_comp >= 1:
+                    recommendation = (
+                        f"session was compacted {n_comp}× but still reached "
+                        f"{total_excess:,} excess tokens — lower compression.threshold "
+                        "or split long tasks across sessions (/new) earlier"
+                    )
+                else:
+                    recommendation = (
+                        "compact/reset context deliberately at session boundaries "
+                        "instead of silently growing it"
+                    )
+
                 findings.append({
                     "severity": "high",
                     "title": "session-level context bloat: no deliberate compaction",
@@ -232,6 +264,7 @@ def detect_waste(events: list[dict], cost_model: CostModel = None) -> dict:
                     ],
                     "call_count": len(sess),
                     "extra_tokens_in": total_excess,
+                    "compaction_count": n_comp,
                     "waste_ratio": round(
                         total_excess / max(1, sum(
                             mc.get("payload", {}).get("tokens_in", 0) or 0
@@ -239,10 +272,7 @@ def detect_waste(events: list[dict], cost_model: CostModel = None) -> dict:
                         )), 4
                     ),
                     "est_wasted_cost": round(est_wasted_cost, 6),
-                    "recommendation": (
-                        "compact/reset context deliberately at session boundaries "
-                        "instead of silently growing it"
-                    ),
+                    "recommendation": recommendation,
                     "fix_ref": "context-compaction: deliberate reset per session",
                     "recheck_metric": "extra_tokens_in",
                 })

@@ -116,6 +116,8 @@ def format_human(cost_data: dict, governance_data: dict) -> str:
             lines.append(f"    Call count: {f['call_count']}")
         if f.get("extra_tokens_in"):
             lines.append(f"    Extra tokens in: {f['extra_tokens_in']:,}")
+        if f.get("compaction_count") is not None:
+            lines.append(f"    Compactions in session: {f['compaction_count']}")
         if f.get("waste_ratio"):
             lines.append(f"    Waste ratio: {f['waste_ratio']}")
         if f.get("est_wasted_cost"):

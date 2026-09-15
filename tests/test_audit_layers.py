@@ -405,3 +405,83 @@ class TestCostModel:
         # excess = 3 * 200K = 600K tokens, all cache-hit → 600K * 0.10/M = 0.06 CNY
         # (vs 600K * 3.0/M = 1.8 CNY without cache discount)
         assert abs(bloat[0]["est_wasted_cost"] - 0.06) < 1e-6
+
+    # ── Compaction-aware bloat 归因（2026-09-15） ──────────────────────
+
+    def _bloat_session_events(self):
+        """4 个 model_call 的 bloat 会话（baseline 100K → 300K×3），带时间戳。"""
+        cm = CostModel(input_price=3.0, output_price=9.0, cache_read_price=0.10)
+        events = []
+        for i, ts in enumerate(
+            ["2026-09-15T10:00:00+00:00", "2026-09-15T10:10:00+00:00",
+             "2026-09-15T10:20:00+00:00", "2026-09-15T10:30:00+00:00"]
+        ):
+            events.append(
+                {
+                    "type": "model_call",
+                    "payload": {
+                        "agent": "test",
+                        "tokens_in": 100_000 if i == 0 else 300_000,
+                        "tokens_out": 0,
+                        "cache_hit": 100_000 if i == 0 else 300_000,
+                    },
+                    "event_id": f"evt-{i}",
+                    "evidence_ref": f"test:{i}",
+                    "timestamp": ts,
+                }
+            )
+        return events, cm
+
+    def test_bloat_finding_no_compaction_count_zero(self):
+        """无压缩事件 → compaction_count == 0，建议保持「主动压缩」。"""
+        events, cm = self._bloat_session_events()
+        waste = detect_waste(events, cm)
+        bloat = [f for f in waste["findings"] if "context bloat" in f["title"]]
+        assert len(bloat) == 1
+        assert bloat[0]["compaction_count"] == 0
+        assert "compacted" not in bloat[0]["recommendation"]
+
+    def test_bloat_finding_compaction_count_matches(self):
+        """段内 2 次压缩仍 bloat → compaction_count == 2，建议调低 threshold。"""
+        events, cm = self._bloat_session_events()
+        events.append(
+            {
+                "type": "context_compression",
+                "payload": {"stage": "started", "session": "s1", "messages": "200", "tokens": 250_000},
+                "event_id": "evt-c1",
+                "evidence_ref": "test:c1",
+                "timestamp": "2026-09-15T10:25:00+00:00",
+            }
+        )
+        events.append(
+            {
+                "type": "context_compression",
+                "payload": {"stage": "done", "session": "s1", "messages": "200->7", "tokens": 5_000},
+                "event_id": "evt-c2",
+                "evidence_ref": "test:c2",
+                "timestamp": "2026-09-15T10:28:00+00:00",
+            }
+        )
+        waste = detect_waste(events, cm)
+        bloat = [f for f in waste["findings"] if "context bloat" in f["title"]]
+        assert len(bloat) == 1
+        assert bloat[0]["compaction_count"] == 2
+        assert "compacted 2" in bloat[0]["recommendation"]
+        assert "threshold" in bloat[0]["recommendation"]
+
+    def test_bloat_finding_compression_outside_segment_ignored(self):
+        """压缩事件时间戳在会话段外 → 不计入该段。"""
+        events, cm = self._bloat_session_events()
+        events.append(
+            {
+                "type": "context_compression",
+                "payload": {"stage": "started", "session": "other", "messages": "50", "tokens": 40_000},
+                "event_id": "evt-c1",
+                "evidence_ref": "test:c1",
+                "timestamp": "2026-09-15T09:00:00+00:00",  # 段之前
+            }
+        )
+        waste = detect_waste(events, cm)
+        bloat = [f for f in waste["findings"] if "context bloat" in f["title"]]
+        assert len(bloat) == 1
+        assert bloat[0]["compaction_count"] == 0

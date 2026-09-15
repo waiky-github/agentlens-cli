@@ -441,6 +441,9 @@ class _HtmlBuilder:
         waste = f.get("est_wasted_cost")
         if waste is not None and waste > 0:
             parts.append(f'<p class="finding-meta">预估浪费: {waste:.6f} CNY</p>')
+        cc = f.get("compaction_count")
+        if cc is not None:
+            parts.append(f'<p class="finding-meta">会话压缩: {cc} 次' + ("" if cc else "（从未主动压缩）") + "</p>")
         # Regulation references
         regs = f.get("regulation_refs", [])
         if regs:

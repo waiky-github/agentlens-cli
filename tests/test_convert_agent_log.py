@@ -355,3 +355,77 @@ class TestConvertAgentLogGeneral:
                 assert "evidence_ref" in evt
         finally:
             os.unlink(tmp)
+
+
+# ── 压缩事件（context_compression） ──────────────────────────────────
+
+_COMPRESSION_STARTED_LINE = (
+    "2026-09-14 17:44:43,000 INFO agent.conversation_loop: "
+    "context compression started: session=20260914_144013_4cc3c5 messages=200 tokens=~263,047"
+)
+
+_COMPRESSION_DONE_LINE = (
+    "2026-09-14 17:47:21,000 INFO agent.conversation_loop: "
+    "context compression done: session=20260914_144013_4cc3c5 messages=200->7 tokens=~5,668"
+)
+
+
+class TestConvertAgentLogCompression:
+    """context_compression 事件解析（会话生命周期信号）。"""
+
+    def test_compression_started_parsed(self):
+        tmp = _write_temp(_COMPRESSION_STARTED_LINE + "\n")
+        try:
+            events = _convert.convert(tmp)
+            assert len(events) == 1
+            evt = events[0]
+            assert evt["type"] == "context_compression"
+            p = evt["payload"]
+            assert p["stage"] == "started"
+            assert p["session"] == "20260914_144013_4cc3c5"
+            assert p["messages"] == "200"
+            assert p["tokens"] == 263047
+        finally:
+            os.unlink(tmp)
+
+    def test_compression_done_parsed(self):
+        tmp = _write_temp(_COMPRESSION_DONE_LINE + "\n")
+        try:
+            events = _convert.convert(tmp)
+            assert len(events) == 1
+            evt = events[0]
+            assert evt["type"] == "context_compression"
+            p = evt["payload"]
+            assert p["stage"] == "done"
+            assert p["session"] == "20260914_144013_4cc3c5"
+            assert p["messages"] == "200->7"
+            assert p["tokens"] == 5668
+        finally:
+            os.unlink(tmp)
+
+    def test_compression_mixed_with_model_and_tool(self):
+        lines = (
+            _NEW_MODEL_LINE + "\n"
+            + _COMPRESSION_STARTED_LINE + "\n"
+            + _NEW_TOOL_LINE + "\n"
+        )
+        tmp = _write_temp(lines)
+        try:
+            events = _convert.convert(tmp)
+            types = [e["type"] for e in events]
+            assert types == ["model_call", "context_compression", "tool_invocation"]
+        finally:
+            os.unlink(tmp)
+
+    def test_compression_required_fields(self):
+        tmp = _write_temp(_COMPRESSION_STARTED_LINE + "\n")
+        try:
+            events = _convert.convert(tmp)
+            evt = events[0]
+            assert "event_id" in evt
+            assert "timestamp" in evt
+            assert "source" in evt
+            assert "evidence_ref" in evt
+            assert evt["source"] == "hermes:agent:log"
+        finally:
+            os.unlink(tmp)
