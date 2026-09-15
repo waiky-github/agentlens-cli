@@ -48,6 +48,13 @@ DEFAULT_KNOWN_AGENTS = [
     # 注：外部消息用户（user:unknown / user:ou_xxx 飞书 open_id）已由
     # shadow.py 的 EXTERNAL_USER_PREFIXES 前缀规则统一豁免，不在此硬编码。
     "hermes:gateway:log",
+    # 2026-09-15 补充：convert_agent_log.py 的 source 语义化标识（agent 日志流），
+    # 与 hermes:gateway:log 同理，是事件来源而非运行中的智能体。
+    "hermes:agent:log",
+    # 2026-09-15 补充：旧版 convert_agent_log.py 把 source 设为裸文件名
+    # 'agent.log' 导致 717 条影子误报；转换器已改语义化 source，此条兜底
+    # 兼容旧报告/旧事件流。
+    "agent.log",
 ]
 
 # Dangerous tools that require explicit approval before execution.
