@@ -89,7 +89,8 @@ def format_human(cost_data: dict, governance_data: dict) -> str:
         lines.append(f"      cost={data['cost']:.6f} CNY")
     lines.append(f"  Pricing: {cost_data['cost_model']['input_price_per_1m']} CNY/M in "
                  f"(cache-hit {cost_data['cost_model']['cache_read_price_per_1m']} CNY/M), "
-                 f"{cost_data['cost_model']['output_price_per_1m']} CNY/M out")
+                 f"{cost_data['cost_model']['output_price_per_1m']} CNY/M out"
+                 f" [price version {cost_data['cost_model'].get('price_version', 'unknown')}]")
 
     # Waste findings
     findings = governance_data["findings"]
@@ -217,16 +218,16 @@ def build_cmd_cost(subparsers):
         help="Output results as JSON (default: human-readable text)",
     )
     p.add_argument(
-        "--input-price", type=float, default=3.0,
-        help="Input token price per 1M tokens (default: 3.0 CNY)",
+        "--input-price", type=float, default=None,
+        help="Input token price per 1M tokens (default: env AGENTLENS_PRICE_INPUT or 3.0 CNY)",
     )
     p.add_argument(
-        "--output-price", type=float, default=9.0,
-        help="Output token price per 1M tokens (default: 9.0 CNY)",
+        "--output-price", type=float, default=None,
+        help="Output token price per 1M tokens (default: env AGENTLENS_PRICE_OUTPUT or 9.0 CNY)",
     )
     p.add_argument(
-        "--cache-price", type=float, default=0.10,
-        help="Cache-hit input token price per 1M tokens (default: 0.10 CNY, Volcano Ark deepseek-v4-flash)",
+        "--cache-price", type=float, default=None,
+        help="Cache-hit input token price per 1M tokens (default: env AGENTLENS_PRICE_CACHE or 0.10 CNY, Volcano Ark deepseek-v4-flash)",
     )
     p.set_defaults(func=cmd_cost)
 
@@ -251,16 +252,16 @@ def build_cmd_audit(subparsers):
         help="Write output to file (default: stdout)",
     )
     p.add_argument(
-        "--input-price", type=float, default=3.0,
-        help="Input token price per 1M tokens (default: 3.0 CNY)",
+        "--input-price", type=float, default=None,
+        help="Input token price per 1M tokens (default: env AGENTLENS_PRICE_INPUT or 3.0 CNY)",
     )
     p.add_argument(
-        "--output-price", type=float, default=9.0,
-        help="Output token price per 1M tokens (default: 9.0 CNY)",
+        "--output-price", type=float, default=None,
+        help="Output token price per 1M tokens (default: env AGENTLENS_PRICE_OUTPUT or 9.0 CNY)",
     )
     p.add_argument(
-        "--cache-price", type=float, default=0.10,
-        help="Cache-hit input token price per 1M tokens (default: 0.10 CNY, Volcano Ark deepseek-v4-flash)",
+        "--cache-price", type=float, default=None,
+        help="Cache-hit input token price per 1M tokens (default: env AGENTLENS_PRICE_CACHE or 0.10 CNY, Volcano Ark deepseek-v4-flash)",
     )
     p.add_argument(
         "--known-agents", default=None,
@@ -306,13 +307,15 @@ def cmd_cost(args):
         print("Error: no events parsed from input file", file=sys.stderr)
         sys.exit(1)
 
-    # Build cost model
+    # Build cost model: CLI args override env (AGENTLENS_PRICE_*), env overrides defaults
     from .config import CostModel
-    cost_model = CostModel(
-        input_price=args.input_price,
-        output_price=args.output_price,
-        cache_read_price=args.cache_price,
-    )
+    cost_model = CostModel.from_env()
+    if args.input_price is not None:
+        cost_model.input_price = args.input_price
+    if args.output_price is not None:
+        cost_model.output_price = args.output_price
+    if args.cache_price is not None:
+        cost_model.cache_read_price = args.cache_price
 
     # Run attribution
     cost_data = attribute_costs(events, cost_model)
@@ -358,11 +361,13 @@ def cmd_audit(args):
         sys.exit(1)
 
     from .config import CostModel
-    cost_model = CostModel(
-        input_price=args.input_price,
-        output_price=args.output_price,
-        cache_read_price=args.cache_price,
-    )
+    cost_model = CostModel.from_env()
+    if args.input_price is not None:
+        cost_model.input_price = args.input_price
+    if args.output_price is not None:
+        cost_model.output_price = args.output_price
+    if args.cache_price is not None:
+        cost_model.cache_read_price = args.cache_price
 
     # Parse --known-agents and --dangerous-tools from CLI args
     known_agents = None

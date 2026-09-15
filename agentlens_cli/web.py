@@ -2290,6 +2290,41 @@ def _get_latest_findings() -> list[dict]:
     return findings
 
 
+def _aggregate_finding_cost(findings: list, layer: str, title: str) -> float:
+    """Aggregate est_wasted_cost for a finding key across report findings."""
+    total = 0.0
+    for f in findings:
+        if f.get("layer") == layer and f.get("title") == title:
+            try:
+                total += float(f.get("est_wasted_cost") or 0)
+            except (TypeError, ValueError):
+                continue
+    return round(total, 6)
+
+
+def _baseline_cost_for_key(key: str) -> float:
+    """Aggregate est_wasted_cost for a finding key from the latest report.
+
+    治理基线（2026-09-15 优化4）：mark-fixed 时定格治理前成本，后续每次审计
+    自动对比（latest_cost / delta_pct），证明「修复确实省了钱」而非只改状态。
+    """
+    try:
+        reports = sorted(REPORT_DIR.glob("audit-*.html"))
+    except OSError:
+        return 0.0
+    if not reports:
+        return 0.0
+    try:
+        html = reports[-1].read_text(encoding="utf-8")
+    except OSError:
+        return 0.0
+    findings = _extract_embedded_findings(html)
+    if not findings:
+        findings = _parse_html_findings(html)
+    layer, title = _decode_finding_key(key)
+    return _aggregate_finding_cost(findings, layer, title)
+
+
 def _recheck_fixed_findings(report_path: str) -> dict | None:
     """Recheck marked_fixed / closed findings against a new report (regression verification).
 
@@ -2320,6 +2355,10 @@ def _recheck_fixed_findings(report_path: str) -> dict | None:
     for f in current_findings:
         current_keys.add((f["layer"], f["title"]))
 
+    def _sum_cost(layer: str, title: str) -> float:
+        """Aggregate est_wasted_cost for a finding key in the current report."""
+        return _aggregate_finding_cost(current_findings, layer, title)
+
     recheck_time = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     reopened = 0
     closed = 0
@@ -2331,11 +2370,21 @@ def _recheck_fixed_findings(report_path: str) -> dict | None:
             continue
         layer, title = _decode_finding_key(entry["key"])
         history = entry.setdefault("recheck_history", [])
+        baseline = float(entry.get("baseline_cost") or 0)
+        cost_history = entry.setdefault("cost_history", [])
         if (layer, title) in current_keys:
             # 再次出现 → 回归（无论之前是 marked_fixed 还是 closed）
+            latest_cost = _sum_cost(layer, title)
             entry["status"] = "reopened"
             entry["verify_status"] = "regressed"
             entry["absent_streak"] = 0
+            entry["latest_cost"] = latest_cost
+            entry["delta_pct"] = (
+                round((latest_cost - baseline) / baseline * 100, 1) if baseline > 0 else None
+            )
+            cost_history.append(
+                {"ts": recheck_time, "cost": latest_cost, "delta_pct": entry["delta_pct"]}
+            )
             reopened += 1
             regressed += 1
             history.append({"ts": recheck_time, "result": "regressed"})
@@ -2343,6 +2392,11 @@ def _recheck_fixed_findings(report_path: str) -> dict | None:
             # 缺席 → 累计连续缺席次数
             streak = int(entry.get("absent_streak", 0)) + 1
             entry["absent_streak"] = streak
+            entry["latest_cost"] = 0.0
+            entry["delta_pct"] = -100.0 if baseline > 0 else None
+            cost_history.append(
+                {"ts": recheck_time, "cost": 0.0, "delta_pct": -100.0 if baseline > 0 else None}
+            )
             if entry.get("status") == "marked_fixed":
                 if streak >= VERIFY_STREAK_REQUIRED:
                     entry["status"] = "closed"
@@ -2459,6 +2513,10 @@ async def api_findings_mark_fixed(key: str, request: Request):
                 entry["status"] = "marked_fixed"
                 entry["marked_at"] = now
                 entry["note"] = note
+                # 重新标记 → 重置治理基线（定格最新报告成本）
+                entry["baseline_cost"] = _baseline_cost_for_key(key)
+                entry.pop("latest_cost", None)
+                entry.pop("delta_pct", None)
                 entry.pop("rechecked_at", None)
                 _save_fixed_findings(fixed_list)
                 return {"status": "ok", "key": key, "action": "re-marked"}
@@ -2473,6 +2531,7 @@ async def api_findings_mark_fixed(key: str, request: Request):
         "status": "marked_fixed",
         "marked_at": now,
         "note": note,
+        "baseline_cost": _baseline_cost_for_key(key),
     }
     fixed_list.append(entry)
     _save_fixed_findings(fixed_list)

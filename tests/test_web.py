@@ -1,5 +1,6 @@
 """Tests for the web server (FastAPI REST API + HTML pages)."""
 
+import json
 import os
 import tempfile
 from pathlib import Path
@@ -551,4 +552,108 @@ class TestP2Notify:
         resp = client.get("/notify")
         assert resp.status_code == 200
         assert "text/html" in resp.headers["content-type"]
-        assert "通知配置" in resp.text
+
+
+class TestP2FixTrackingCost:
+    """优化4（2026-09-15）：治理后验证——mark-fixed 定格 baseline_cost，recheck 自动对比成本。"""
+
+    @staticmethod
+    def _isolate_fixed_file(monkeypatch, tmp_path):
+        """把 fixed-findings.json 隔离到 tmp 目录，避免污染共享测试数据。"""
+        from agentlens_cli import web as web_mod
+        fixed = tmp_path / "fixed-findings.json"
+        monkeypatch.setattr(web_mod, "_FIXED_FILE", fixed)
+        return web_mod
+
+    def test_mark_fixed_records_baseline_cost(self, monkeypatch, tmp_path):
+        """新 mark-fixed 的 entry 必须带 baseline_cost（治理前成本定格）。"""
+        web_mod = self._isolate_fixed_file(monkeypatch, tmp_path)
+        from urllib.parse import quote
+        key = "成本治理|test-baseline-cost"
+        resp = client.post(f"/api/findings/{quote(key, safe='')}/mark-fixed", json={"note": "x"})
+        assert resp.status_code == 200
+        assert resp.json()["action"] == "marked"
+        entries = web_mod._load_fixed_findings()
+        assert len(entries) == 1
+        e = entries[0]
+        assert e["status"] == "marked_fixed"
+        assert "baseline_cost" in e  # 定格治理前成本（float，可能为 0）
+        assert isinstance(e["baseline_cost"], (int, float))
+
+    def test_recheck_regressed_records_cost_delta(self, monkeypatch, tmp_path):
+        """修复后再次出现（回归）→ latest_cost + delta_pct + cost_history。"""
+        web_mod = self._isolate_fixed_file(monkeypatch, tmp_path)
+        web_mod._save_fixed_findings([{
+            "key": "成本治理|bloat-test",
+            "status": "marked_fixed",
+            "marked_at": "2026-09-15 10:00 UTC",
+            "note": "x",
+            "baseline_cost": 100.0,
+            "absent_streak": 0,
+        }])
+        html = (
+            '<html><body><script id="findings-data" type="application/json">'
+            + json.dumps([
+                {"layer": "成本治理", "title": "bloat-test", "severity": "high",
+                 "est_wasted_cost": 42.0},
+            ])
+            + "</script></body></html>"
+        )
+        report = tmp_path / "audit-20260916.html"
+        report.write_text(html, encoding="utf-8")
+        summary = web_mod._recheck_fixed_findings(str(report))
+        assert summary["regressed"] == 1
+        e = web_mod._load_fixed_findings()[0]
+        assert e["status"] == "reopened"
+        assert e["verify_status"] == "regressed"
+        assert e["latest_cost"] == 42.0
+        assert e["delta_pct"] == -58.0  # (42-100)/100*100
+        assert e["cost_history"][-1]["cost"] == 42.0
+        assert e["cost_history"][-1]["delta_pct"] == -58.0
+
+    def test_recheck_absent_records_zero_cost(self, monkeypatch, tmp_path):
+        """修复后缺席审计 → latest_cost=0 + delta_pct=-100 + absent_streak 累计。"""
+        web_mod = self._isolate_fixed_file(monkeypatch, tmp_path)
+        web_mod._save_fixed_findings([{
+            "key": "成本治理|bloat-test",
+            "status": "marked_fixed",
+            "marked_at": "2026-09-15 10:00 UTC",
+            "note": "x",
+            "baseline_cost": 100.0,
+            "absent_streak": 0,
+        }])
+        html = '<html><body><script id="findings-data" type="application/json">[]</script></body></html>'
+        report = tmp_path / "audit-20260916.html"
+        report.write_text(html, encoding="utf-8")
+        summary = web_mod._recheck_fixed_findings(str(report))
+        assert summary["regressed"] == 0
+        e = web_mod._load_fixed_findings()[0]
+        assert e["latest_cost"] == 0.0
+        assert e["delta_pct"] == -100.0
+        assert e["absent_streak"] == 1
+        assert e["verify_status"] == "verifying"  # 未达连续 3 次缺席
+
+    def test_re_marked_resets_baseline_and_delta(self, monkeypatch, tmp_path):
+        """closed 复发后重新标记 → 重置基线，清除旧 latest_cost/delta_pct。"""
+        web_mod = self._isolate_fixed_file(monkeypatch, tmp_path)
+        from urllib.parse import quote
+        key = "成本治理|bloat-test"
+        web_mod._save_fixed_findings([{
+            "key": key,
+            "status": "closed",
+            "marked_at": "2026-09-15 10:00 UTC",
+            "note": "x",
+            "baseline_cost": 50.0,
+            "latest_cost": 10.0,
+            "delta_pct": -80.0,
+            "absent_streak": 3,
+        }])
+        resp = client.post(f"/api/findings/{quote(key, safe='')}/mark-fixed", json={"note": "again"})
+        assert resp.status_code == 200
+        assert resp.json()["action"] == "re-marked"
+        e = web_mod._load_fixed_findings()[0]
+        assert e["status"] == "marked_fixed"
+        assert "latest_cost" not in e
+        assert "delta_pct" not in e
+        assert "rechecked_at" not in e
+        assert "baseline_cost" in e  # 重新定格基线

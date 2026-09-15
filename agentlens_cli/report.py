@@ -125,6 +125,14 @@ class _HtmlBuilder:
         total_cost = cost.get("total_cost", 0)
         closure_rate = graph.get("metrics", {}).get("closure_rate", 0)
 
+        cm_dict = cost.get("cost_model", {}) or {}
+        cache_p = cm_dict.get("cache_read_price_per_1m")
+        pv = cm_dict.get("price_version", "")
+        if cache_p is not None:
+            pricing_note = f"含 cache 折扣(命中 {cache_p}/1M)@{pv}"
+        else:
+            pricing_note = f"全价估算@{pv}" if pv else "全价估算"
+
         kpi_cards = (
             f'<div class="kpi-card {"red" if high > 0 else "green"}">'
             f'<div class="kpi-label">发现总数</div>'
@@ -133,7 +141,7 @@ class _HtmlBuilder:
             f'<div class="kpi-card {"red" if est_waste > 0 else "green"}">'
             f'<div class="kpi-label">预估浪费成本</div>'
             f'<div class="kpi-value">{est_waste:.4f}</div>'
-            f'<div class="kpi-sub">CNY（总成本 {total_cost:.4f}）</div></div>'
+            f'<div class="kpi-sub">CNY（总成本 {total_cost:.4f} · {pricing_note}）</div></div>'
             f'<div class="kpi-card {"purple" if shadow_count > 0 else "green"}">'
             f'<div class="kpi-label">影子智能体</div>'
             f'<div class="kpi-value">{shadow_count}</div>'

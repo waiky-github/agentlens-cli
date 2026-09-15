@@ -485,3 +485,211 @@ class TestCostModel:
         bloat = [f for f in waste["findings"] if "context bloat" in f["title"]]
         assert len(bloat) == 1
         assert bloat[0]["compaction_count"] == 0
+
+
+# ── 优化1: 配置漂移审计（2026-09-15） ─────────────────────────────
+
+
+def _snap_events(snapshots: list) -> list:
+    """Build config_snapshot events (as injected by converter --config-snapshot)."""
+    return [
+        {
+            "type": "config_snapshot",
+            "payload": p,
+            "event_id": f"snap-{i}",
+            "timestamp": "2026-09-15T10:00:00+00:00",
+            "source": "hermes:agent:config",
+            "evidence_ref": "<config-snapshot>",
+        }
+        for i, p in enumerate(snapshots, 1)
+    ]
+
+
+class TestConfigDrift:
+    """Detection 6: config drift — inconsistent / lax compression thresholds."""
+
+    def test_inconsistent_thresholds_high(self):
+        """2 scopes 阈值不一致（creative 0.1 / researcher 0.5）→ high finding。"""
+        cm = CostModel(input_price=3.0, output_price=9.0, cache_read_price=0.10)
+        events = _snap_events([
+            {"scope": "creative", "compression_threshold": 0.1, "context_length": 1_000_000},
+            {"scope": "researcher", "compression_threshold": 0.5, "context_length": 1_000_000},
+        ])
+        waste = detect_waste(events, cm)
+        drift = [f for f in waste["findings"] if "inconsistent compression thresholds" in f["title"]]
+        assert len(drift) == 1
+        assert drift[0]["severity"] == "high"
+        assert "creative=0.1" in drift[0]["config_detail"]
+        assert "researcher=0.5" in drift[0]["config_detail"]
+
+    def test_lax_threshold_medium(self):
+        """单 scope threshold 0.5 → medium（过松）。"""
+        cm = CostModel(input_price=3.0, output_price=9.0, cache_read_price=0.10)
+        events = _snap_events([
+            {"scope": "ops", "compression_threshold": 0.5, "context_length": 1_000_000},
+        ])
+        waste = detect_waste(events, cm)
+        lax = [f for f in waste["findings"] if "lax compression threshold" in f["title"]]
+        assert len(lax) == 1
+        assert lax[0]["severity"] == "medium"
+        assert "ops" in lax[0]["title"]
+        assert "500,000" in lax[0]["title"]  # 触发线 0.5M tokens
+
+    def test_consistent_thresholds_no_drift(self):
+        """2 scopes 都 0.1 → 无 drift / lax finding。"""
+        cm = CostModel(input_price=3.0, output_price=9.0, cache_read_price=0.10)
+        events = _snap_events([
+            {"scope": "creative", "compression_threshold": 0.1, "context_length": 1_000_000},
+            {"scope": "researcher", "compression_threshold": 0.1, "context_length": 1_000_000},
+        ])
+        waste = detect_waste(events, cm)
+        drift = [f for f in waste["findings"] if "config drift" in f["title"] or "lax compression" in f["title"]]
+        assert drift == []
+
+    def test_no_snapshot_no_drift_finding(self):
+        """无 config_snapshot 事件 → 不产生 drift finding（旧行为不变）。"""
+        cm = CostModel(input_price=3.0, output_price=9.0, cache_read_price=0.10)
+        events = [
+            {"type": "model_call", "payload": {"agent": "test", "tokens_in": 100_000, "tokens_out": 0},
+             "event_id": "evt-1", "timestamp": "2026-09-15T10:00:00+00:00"},
+        ]
+        waste = detect_waste(events, cm)
+        drift = [f for f in waste["findings"] if "config drift" in f["title"] or "lax compression" in f["title"]]
+        assert drift == []
+
+
+# ── 优化2: proximity 临界风险（2026-09-15） ────────────────────────
+
+
+class TestProximity:
+    """bloat finding 带距触发线距离；临界会话（差一点没触发）提前预警。"""
+
+    def _bloat_events(self):
+        cm = CostModel(input_price=3.0, output_price=9.0, cache_read_price=0.10)
+        events = []
+        for i, ts in enumerate(
+            ["2026-09-15T10:00:00+00:00", "2026-09-15T10:10:00+00:00",
+             "2026-09-15T10:20:00+00:00", "2026-09-15T10:30:00+00:00"]
+        ):
+            events.append({
+                "type": "model_call",
+                "payload": {
+                    "agent": "test",
+                    "tokens_in": 100_000 if i == 0 else 300_000,
+                    "tokens_out": 0,
+                    "cache_hit": 100_000 if i == 0 else 300_000,
+                },
+                "event_id": f"evt-{i}",
+                "evidence_ref": f"test:{i}",
+                "timestamp": ts,
+            })
+        return events, cm
+
+    def test_bloat_finding_has_proximity_fields(self):
+        """bloat finding 带 peak/trigger_line/distance；默认触发线 300k。"""
+        events, cm = self._bloat_events()
+        waste = detect_waste(events, cm)
+        bloat = [f for f in waste["findings"] if "context bloat" in f["title"]]
+        assert len(bloat) == 1
+        assert bloat[0]["peak_tokens_in"] == 300_000
+        assert bloat[0]["trigger_line_tokens"] == 300_000
+        assert bloat[0]["distance_to_trigger"] == 0
+
+    def test_proximity_uses_snapshot_trigger_line(self):
+        """注入 config_snapshot（threshold 0.2×1M=200k）→ 触发线 200k，distance 为负。"""
+        events, cm = self._bloat_events()
+        events += _snap_events([
+            {"scope": "test", "compression_threshold": 0.2, "context_length": 1_000_000},
+        ])
+        waste = detect_waste(events, cm)
+        bloat = [f for f in waste["findings"] if "context bloat" in f["title"]]
+        assert len(bloat) == 1
+        assert bloat[0]["trigger_line_tokens"] == 200_000
+        assert bloat[0]["distance_to_trigger"] == -100_000  # 已超线 100k
+
+    def test_session_approaching_threshold_info(self):
+        """未 bloat（excess 70k < 100k）但峰值 290k ≥ 80% 触发线 → info 预警。"""
+        cm = CostModel(input_price=3.0, output_price=9.0, cache_read_price=0.10)
+        events = [
+            {"type": "model_call",
+             "payload": {"agent": "test", "tokens_in": 250_000, "tokens_out": 0, "cache_hit": 250_000},
+             "event_id": "evt-0", "timestamp": "2026-09-15T10:00:00+00:00"},
+            {"type": "model_call",
+             "payload": {"agent": "test", "tokens_in": 280_000, "tokens_out": 0, "cache_hit": 280_000},
+             "event_id": "evt-1", "timestamp": "2026-09-15T10:10:00+00:00"},
+            {"type": "model_call",
+             "payload": {"agent": "test", "tokens_in": 290_000, "tokens_out": 0, "cache_hit": 290_000},
+             "event_id": "evt-2", "timestamp": "2026-09-15T10:20:00+00:00"},
+        ]
+        waste = detect_waste(events, cm)
+        bloat = [f for f in waste["findings"] if "context bloat" in f["title"]]
+        assert bloat == []  # excess 70k < 100k，不 bloat
+        near = [f for f in waste["findings"] if "approaching compression threshold" in f["title"]]
+        assert len(near) == 1
+        assert near[0]["severity"] == "info"
+        assert near[0]["peak_tokens_in"] == 290_000
+        assert near[0]["trigger_line_tokens"] == 300_000
+        assert near[0]["distance_to_trigger"] == 10_000
+
+    def test_compacted_session_not_flagged_near_line(self):
+        """已压缩过的会话即使接近触发线也不报 approaching（压缩是正常信号）。"""
+        cm = CostModel(input_price=3.0, output_price=9.0, cache_read_price=0.10)
+        events = [
+            {"type": "model_call",
+             "payload": {"agent": "test", "tokens_in": 250_000, "tokens_out": 0},
+             "event_id": "evt-0", "timestamp": "2026-09-15T10:00:00+00:00"},
+            {"type": "model_call",
+             "payload": {"agent": "test", "tokens_in": 290_000, "tokens_out": 0},
+             "event_id": "evt-1", "timestamp": "2026-09-15T10:10:00+00:00"},
+            {"type": "context_compression",
+             "payload": {"stage": "done", "session": "s1", "messages": "50->5", "tokens": 3_000},
+             "event_id": "evt-c1", "timestamp": "2026-09-15T10:15:00+00:00"},
+            {"type": "model_call",
+             "payload": {"agent": "test", "tokens_in": 250_000, "tokens_out": 0},
+             "event_id": "evt-2", "timestamp": "2026-09-15T10:20:00+00:00"},
+        ]
+        waste = detect_waste(events, cm)
+        near = [f for f in waste["findings"] if "approaching compression threshold" in f["title"]]
+        assert near == []
+
+
+# ── 优化3: 价格版本 + 外置配置（2026-09-15） ───────────────────────
+
+
+class TestCostModelExt:
+    """CostModel 价格版本字段与环境变量外置。"""
+
+    def test_to_dict_has_price_version(self):
+        cm = CostModel(input_price=3.0, output_price=9.0, cache_read_price=0.10)
+        d = cm.to_dict()
+        assert d["price_version"] == "2026-09-15"
+        assert d["cache_read_price_per_1m"] == 0.10
+
+    def test_from_env_defaults(self, monkeypatch):
+        for k in ("AGENTLENS_PRICE_INPUT", "AGENTLENS_PRICE_OUTPUT",
+                  "AGENTLENS_PRICE_CACHE", "AGENTLENS_PRICE_VERSION"):
+            monkeypatch.delenv(k, raising=False)
+        cm = CostModel.from_env()
+        assert cm.input_price == 3.0
+        assert cm.output_price == 9.0
+        assert cm.cache_read_price == 0.10
+        assert cm.price_version == "2026-09-15"
+
+    def test_from_env_overrides(self, monkeypatch):
+        for k in ("AGENTLENS_PRICE_INPUT", "AGENTLENS_PRICE_OUTPUT",
+                  "AGENTLENS_PRICE_CACHE", "AGENTLENS_PRICE_VERSION"):
+            monkeypatch.delenv(k, raising=False)
+        monkeypatch.setenv("AGENTLENS_PRICE_INPUT", "2.4")
+        monkeypatch.setenv("AGENTLENS_PRICE_CACHE", "0")
+        monkeypatch.setenv("AGENTLENS_PRICE_VERSION", "2026-08-21")
+        cm = CostModel.from_env()
+        assert cm.input_price == 2.4
+        assert cm.cache_read_price == 0.0  # 显式 0 必须生效（免费 cache）
+        assert cm.price_version == "2026-08-21"
+        assert cm.output_price == 9.0  # 未设置 → 默认
+
+    def test_from_env_ignores_invalid(self, monkeypatch):
+        monkeypatch.delenv("AGENTLENS_PRICE_INPUT", raising=False)
+        monkeypatch.setenv("AGENTLENS_PRICE_INPUT", "abc")
+        cm = CostModel.from_env()
+        assert cm.input_price == 3.0  # 非法值回退默认

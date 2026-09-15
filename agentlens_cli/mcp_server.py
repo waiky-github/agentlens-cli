@@ -208,7 +208,8 @@ def fix_tracking_status() -> str:
     """查询修复跟踪与回归验证状态（fixed-findings.json）。
 
     无参数。返回 JSON：found / total / by_status / by_verify / entries 摘要
-    （entry 含 key, status, verify_status, marked_at；不含 note 全文，避免无关噪声）。
+    （entry 含 key, status, verify_status, marked_at, baseline_cost,
+    latest_cost, delta_pct；不含 note 全文，避免无关噪声）。
     """
     report_dir = Path(
         os.environ.get(
@@ -236,6 +237,10 @@ def fix_tracking_status() -> str:
             "status": st,
             "verify_status": vs,
             "marked_at": e.get("marked_at", ""),
+            # 优化4（2026-09-15）：成本对比字段透传（治理基线 → 最新成本 → 变化率）
+            "baseline_cost": e.get("baseline_cost"),
+            "latest_cost": e.get("latest_cost"),
+            "delta_pct": e.get("delta_pct"),
         })
     summary["entries"] = entries
     return json.dumps(summary, ensure_ascii=False)

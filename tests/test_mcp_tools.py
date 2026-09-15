@@ -58,7 +58,8 @@ class TestFixTrackingStatus:
         monkeypatch.setenv("AGENTLENS_REPORT_DIR", str(tmp_path))
         (tmp_path / "fixed-findings.json").write_text(
             json.dumps([
-                {"key": "graph|A", "status": "closed", "verify_status": "verified", "marked_at": "t1"},
+                {"key": "graph|A", "status": "closed", "verify_status": "verified", "marked_at": "t1",
+                 "baseline_cost": 100.0, "latest_cost": 0.0, "delta_pct": -100.0},
                 {"key": "cost|B", "status": "marked_fixed", "verify_status": "verifying", "marked_at": "t2"},
                 {"key": "shadow|C", "status": "reopened", "verify_status": "regressed", "marked_at": "t3"},
             ]),
@@ -72,6 +73,11 @@ class TestFixTrackingStatus:
         assert len(out["entries"]) == 3
         # entry 不含 note 字段
         assert "note" not in out["entries"][0]
+        # 优化4（2026-09-15）：成本对比字段透传（baseline_cost / latest_cost / delta_pct）
+        e0 = out["entries"][0]
+        assert e0["baseline_cost"] == 100.0
+        assert e0["latest_cost"] == 0.0
+        assert e0["delta_pct"] == -100.0
 
     def test_bad_json(self, monkeypatch, tmp_path):
         monkeypatch.setenv("AGENTLENS_REPORT_DIR", str(tmp_path))

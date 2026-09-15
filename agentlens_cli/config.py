@@ -1,5 +1,13 @@
 """Pricing configuration for cost attribution."""
 
+import os
+
+
+# 价格版本：deepseek-v4-flash 8/21 涨价后官方价（输入 3.0 / 输出 9.0），
+# cache 命中 0.10 为方舟 flash 实证价（2026-09-15 验证）。报告/CLI 带版本号，
+# 让任何成本数字都能回溯到所用价格口径。
+PRICE_VERSION_DEFAULT = "2026-09-15"
+
 
 class CostModel:
     """Token pricing model. All prices are per 1M tokens.
@@ -16,10 +24,43 @@ class CostModel:
         input_price: float = 3.0,
         output_price: float = 9.0,
         cache_read_price: float = 0.10,
+        price_version: str = PRICE_VERSION_DEFAULT,
     ):
         self.input_price = input_price
         self.output_price = output_price
         self.cache_read_price = cache_read_price
+        self.price_version = price_version
+
+    @classmethod
+    def from_env(cls) -> "CostModel":
+        """Build a CostModel from environment overrides (AGENTLENS_PRICE_*).
+
+        Lets ops tune prices without touching code:
+          AGENTLENS_PRICE_INPUT    input price CNY/1M
+          AGENTLENS_PRICE_OUTPUT   output price CNY/1M
+          AGENTLENS_PRICE_CACHE    cache-hit price CNY/1M (0 allowed)
+          AGENTLENS_PRICE_VERSION  price version tag shown in reports
+        Unset vars fall back to defaults; empty/invalid values are ignored.
+        """
+        def _float(name):
+            raw = os.environ.get(name)
+            if raw is None or raw.strip() == "":
+                return None
+            try:
+                return float(raw)
+            except ValueError:
+                return None
+
+        kwargs: dict = {"price_version": os.environ.get("AGENTLENS_PRICE_VERSION") or PRICE_VERSION_DEFAULT}
+        for env_name, attr in (
+            ("AGENTLENS_PRICE_INPUT", "input_price"),
+            ("AGENTLENS_PRICE_OUTPUT", "output_price"),
+            ("AGENTLENS_PRICE_CACHE", "cache_read_price"),
+        ):
+            v = _float(env_name)
+            if v is not None:
+                kwargs[attr] = v
+        return cls(**kwargs)
 
     def input_cost(self, tokens: int, cache_hit: int = 0) -> float:
         """Cost of input tokens; cache_hit (tokens) billed at cache price."""
@@ -39,6 +80,7 @@ class CostModel:
             "cache_read_price_per_1m": self.cache_read_price,
             "output_price_per_1m": self.output_price,
             "currency": "CNY",
+            "price_version": self.price_version,
             "note": "estimate — configurable pricing model; cache_read 0.10 = Volcano Ark deepseek-v4-flash cache-hit (2026-09-15)",
         }
 

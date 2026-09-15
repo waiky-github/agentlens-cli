@@ -10,6 +10,16 @@ from .config import CostModel, DEFAULT_COST_MODEL
 LARGE_OUTPUT_THRESHOLD = 10_000  # chars: output_chars > this = large injection
 CHARS_PER_TOKEN_ESTIMATE = 4  # rough estimate: ~4 chars per token
 
+# ── 配置漂移 / proximity 常量（2026-09-15 优化） ────────────────────
+# 过松判定：compression.threshold > 0.3 或触发线（threshold×context_length）
+# > 300k tokens。实证：治理前 creative 0.3 × 1M context = 30 万才触发，
+# zine 会话峰值 291,728 差 8,272 未触发 → 全程 0 次压缩、单条 bloat 109 元。
+CONFIG_LAX_THRESHOLD = 0.3
+DEFAULT_CONTEXT_LENGTH = 1_000_000
+DEFAULT_TRIGGER_LINE_TOKENS = int(CONFIG_LAX_THRESHOLD * DEFAULT_CONTEXT_LENGTH)  # 300k
+# 临界会话：峰值 ≥ 触发线 × 0.8 且未压缩 → info 预警（临界风险提前暴露）
+NEAR_LINE_RATIO = 0.8
+
 
 def detect_waste(events: list[dict], cost_model: CostModel = None) -> dict:
     """Detect waste in events based on cost-governance SKILL.md rules."""
@@ -18,6 +28,24 @@ def detect_waste(events: list[dict], cost_model: CostModel = None) -> dict:
 
     sorted_events = sorted(events, key=lambda e: e.get("timestamp") or "")
     findings = []
+
+    # ── 配置快照（config_snapshot 事件，converter 注入） ───────────────
+    # 供两个用途：① 配置漂移检测（threshold 不一致/过松）；② bloat
+    # proximity——压缩触发线 = threshold×context_length（多 scope 取最严格）。
+    snapshots = [e for e in sorted_events if e.get("type") == "config_snapshot"]
+    per_scope: dict[str, dict] = {}
+    for e in snapshots:
+        p = e.get("payload", {}) or {}
+        scope = str(p.get("scope") or p.get("agent") or "unknown")
+        per_scope.setdefault(scope, p)
+    trigger_lines = []
+    for p in per_scope.values():
+        thr = p.get("compression_threshold")
+        if thr is None:
+            continue
+        ctx = p.get("context_length") or DEFAULT_CONTEXT_LENGTH
+        trigger_lines.append(float(thr) * float(ctx))
+    trigger_line_tokens = int(min(trigger_lines)) if trigger_lines else DEFAULT_TRIGGER_LINE_TOKENS
 
     # Build an ordered list of model_call / tool_invocation events
     tool_and_model = []
@@ -217,6 +245,14 @@ def detect_waste(events: list[dict], cost_model: CostModel = None) -> dict:
             if baseline <= 0:
                 continue
 
+            # 会话峰值 + 段内压缩次数（bloat / 临界分支共用）
+            peak_tokens = max((mc.get("payload", {}).get("tokens_in", 0) or 0) for mc in sess)
+            s_ts0 = sess[0].get("timestamp") or ""
+            s_ts1 = sess[-1].get("timestamp") or ""
+            n_comp = 0
+            if compression_ts and s_ts0 and s_ts1:
+                n_comp = sum(1 for c in compression_ts if s_ts0 <= c <= s_ts1)
+
             total_excess = 0
             total_excess_cache = 0
             for mc in sess[1:]:
@@ -235,13 +271,6 @@ def detect_waste(events: list[dict], cost_model: CostModel = None) -> dict:
 
             if total_excess > 100_000:
                 est_wasted_cost = cost_model.input_cost(total_excess, cache_hit=total_excess_cache)
-
-                # 会话段内压缩次数（压缩事件时间戳落在段 [first, last] 闭区间内）
-                s_ts0 = sess[0].get("timestamp") or ""
-                s_ts1 = sess[-1].get("timestamp") or ""
-                n_comp = 0
-                if compression_ts and s_ts0 and s_ts1:
-                    n_comp = sum(1 for c in compression_ts if s_ts0 <= c <= s_ts1)
 
                 if n_comp >= 1:
                     recommendation = (
@@ -265,6 +294,12 @@ def detect_waste(events: list[dict], cost_model: CostModel = None) -> dict:
                     "call_count": len(sess),
                     "extra_tokens_in": total_excess,
                     "compaction_count": n_comp,
+                    # proximity（2026-09-15）：峰值距压缩触发线多远。
+                    # zine 实证：峰值 291,728 vs 触发线 300,000 差 8,272 ——
+                    # 「差一点没触发」比事后 bloat 更早暴露风险。
+                    "peak_tokens_in": peak_tokens,
+                    "trigger_line_tokens": trigger_line_tokens,
+                    "distance_to_trigger": trigger_line_tokens - peak_tokens,
                     "waste_ratio": round(
                         total_excess / max(1, sum(
                             mc.get("payload", {}).get("tokens_in", 0) or 0
@@ -275,6 +310,59 @@ def detect_waste(events: list[dict], cost_model: CostModel = None) -> dict:
                     "recommendation": recommendation,
                     "fix_ref": "context-compaction: deliberate reset per session",
                     "recheck_metric": "extra_tokens_in",
+                })
+
+                # 临界会话：已 bloat 且峰值距触发线 < 20% → 补充提示触发线过低/过近
+                if trigger_line_tokens - peak_tokens < 0.2 * trigger_line_tokens:
+                    findings.append({
+                        "severity": "info",
+                        "title": "session peaked within 20% of compression trigger line",
+                        "evidence_refs": [
+                            sess[0].get("event_id"),
+                            sess[-1].get("event_id"),
+                        ],
+                        "call_count": len(sess),
+                        "peak_tokens_in": peak_tokens,
+                        "trigger_line_tokens": trigger_line_tokens,
+                        "distance_to_trigger": trigger_line_tokens - peak_tokens,
+                        "extra_tokens_in": 0,
+                        "waste_ratio": 0.0,
+                        "est_wasted_cost": 0.0,
+                        "recommendation": (
+                            f"session peak {peak_tokens:,} is within 20% of the "
+                            f"compression trigger line ({trigger_line_tokens:,}) — "
+                            "compaction barely fired; consider lowering "
+                            "compression.threshold for earlier, cheaper compaction"
+                        ),
+                        "fix_ref": "context-compaction: lower threshold",
+                        "recheck_metric": "distance_to_trigger",
+                    })
+
+            # 未达 bloat 阈值但接近触发线且未压缩 → 临界风险预警
+            elif n_comp == 0 and NEAR_LINE_RATIO * trigger_line_tokens <= peak_tokens < trigger_line_tokens:
+                findings.append({
+                    "severity": "info",
+                    "title": "session approaching compression threshold (no compaction)",
+                    "evidence_refs": [
+                        sess[0].get("event_id"),
+                        sess[-1].get("event_id"),
+                    ],
+                    "call_count": len(sess),
+                    "peak_tokens_in": peak_tokens,
+                    "trigger_line_tokens": trigger_line_tokens,
+                    "distance_to_trigger": trigger_line_tokens - peak_tokens,
+                    "extra_tokens_in": 0,
+                    "waste_ratio": 0.0,
+                    "est_wasted_cost": 0.0,
+                    "recommendation": (
+                        f"session peak {peak_tokens:,} is within "
+                        f"{int((1 - NEAR_LINE_RATIO) * 100)}% of the compression "
+                        f"trigger line ({trigger_line_tokens:,}) but never compacted — "
+                        "lower compression.threshold so the next long session compacts "
+                        "before it approaches bloat"
+                    ),
+                    "fix_ref": "context-compaction: lower threshold",
+                    "recheck_metric": "distance_to_trigger",
                 })
 
     # ============================================================
@@ -359,6 +447,73 @@ def detect_waste(events: list[dict], cost_model: CostModel = None) -> dict:
         "fix_ref": "cost-model: embed prices",
         "recheck_metric": "price_accuracy",
     })
+
+    # ============================================================
+    # Detection 6: Config drift — inconsistent / lax compression thresholds
+    # ============================================================
+    # 触发：converter 注入了 config_snapshot 事件。这是 watchdog 数据暴露的
+    # 根因级发现（治理前 5 profile threshold 0.1/0.5 混用，审计本身没抓到）
+    # —— 工具能审别人、漏了自己，缺的就是这一维。
+    if snapshots and len(per_scope) >= 1:
+        # 6a. 不一致：多 scope threshold 值不统一
+        thr_by_scope = {
+            s: p.get("compression_threshold")
+            for s, p in per_scope.items()
+            if p.get("compression_threshold") is not None
+        }
+        if len(thr_by_scope) >= 2 and len(set(thr_by_scope.values())) > 1:
+            detail = "; ".join(
+                f"{s}={v}" for s, v in sorted(thr_by_scope.items())
+            )
+            findings.append({
+                "severity": "high",
+                "title": "config drift: inconsistent compression thresholds",
+                "evidence_refs": [e.get("event_id") for e in snapshots if e.get("event_id")],
+                "extra_tokens_in": 0,
+                "waste_ratio": 0.0,
+                "est_wasted_cost": 0.0,
+                "config_detail": detail,
+                "recommendation": (
+                    f"unify compression.threshold across agents ({detail}); "
+                    "lax agents (0.3+) let sessions reach ~300k tokens before "
+                    "compacting — align toward 0.1-0.2"
+                ),
+                "fix_ref": "config-drift: unify thresholds",
+                "recheck_metric": "config_threshold_uniformity",
+            })
+
+        # 6b. 过松：单 scope threshold 过高或触发线超过默认触发线
+        for scope, p in per_scope.items():
+            thr = p.get("compression_threshold")
+            if thr is None:
+                continue
+            ctx = p.get("context_length") or DEFAULT_CONTEXT_LENGTH
+            line = float(thr) * float(ctx)
+            if float(thr) > CONFIG_LAX_THRESHOLD or int(line) > DEFAULT_TRIGGER_LINE_TOKENS:
+                findings.append({
+                    "severity": "medium",
+                    "title": (
+                        f"lax compression threshold: {scope} "
+                        f"(threshold {thr} → trigger line {int(line):,} tokens)"
+                    ),
+                    "evidence_refs": [
+                        e.get("event_id")
+                        for e in snapshots
+                        if (e.get("payload", {}) or {}).get("scope") == scope
+                        and e.get("event_id")
+                    ],
+                    "extra_tokens_in": 0,
+                    "waste_ratio": 0.0,
+                    "est_wasted_cost": 0.0,
+                    "config_detail": f"threshold={thr}, context_length={int(ctx)}, trigger_line={int(line):,}",
+                    "recommendation": (
+                        f"lower {scope} compression.threshold from {thr} to "
+                        f"<= {CONFIG_LAX_THRESHOLD} so sessions compact before "
+                        f"reaching {int(line):,} tokens"
+                    ),
+                    "fix_ref": f"config-drift: lower {scope} threshold",
+                    "recheck_metric": "config_threshold_laxness",
+                })
 
     # Deduplicate findings by evidence_refs (avoid double-counting)
     seen_refs = set()
