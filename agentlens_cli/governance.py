@@ -244,12 +244,21 @@ def detect_waste(events: list[dict], cost_model: CostModel = None) -> dict:
     )
 
     # 压缩事件（started/done），按时间戳排序，用于会话段归因。
-    # 只统计 started（done 是同一事件的确认，不重复计——2026-09-16 修复：
-    # 之前 started+done 都计入导致一次压缩算 2 次，段内出现 comp=5/10 虚高）。
+    # 优先用 done（一次压缩一个 done，天然去重；且 done 的 payload.session
+    # = Hermes 压缩产出的新会话 id，是「压缩后新会话段继承压缩」的锚点——
+    # 2026-09-16 修复：旧逻辑只收集 started，而 started 的 session 恒等于
+    # 压缩源会话，导致压缩后新会话段永远匹配不到压缩事件 → comp=0 误报
+    # 「未主动压缩」（实证：main evt-0695 实际压缩 1 次却报 comp=0）。
+    # started+done 都收集会一次压缩算 2 次（段内 comp=5/10 虚高），故只取
+    # done；旧事件流若完全没有 done 则回退 started（行为与旧版一致）。
+    comp_all = [
+        e for e in sorted_events
+        if e.get("type") == "context_compression"
+    ]
+    comp_done = [e for e in comp_all if (e.get("payload", {}) or {}).get("stage") == "done"]
+    comp_started = [e for e in comp_all if (e.get("payload", {}) or {}).get("stage") == "started"]
     compressions = sorted(
-        [e for e in sorted_events
-         if e.get("type") == "context_compression"
-         and (e.get("payload", {}) or {}).get("stage") == "started"],
+        comp_done if comp_done else comp_started,
         key=lambda e: e.get("timestamp") or "",
     )
 
@@ -340,18 +349,36 @@ def detect_waste(events: list[dict], cost_model: CostModel = None) -> dict:
                     if not c_ts:
                         continue
                     # 归属窗口：[段首, 下一段首)。最后一段无上界。
-                    if c_ts < s_ts0 or (s_ts1 and c_ts >= s_ts1):
-                        continue
+                    in_window = not (c_ts < s_ts0 or (s_ts1 and c_ts >= s_ts1))
+                    c_sid = c.get("session_id") or (c.get("payload", {}) or {}).get("session_id")
+                    # 压缩 done 后 Hermes 会创建新 session_id（payload.session 是
+                    # 压缩产出的新会话，converter 从日志 `session=` 提取）；旧逻辑只
+                    # 匹配 c_sid（压缩时运行中的会话）+ 时间窗口，导致压缩后新会话段
+                    # 永远匹配不到压缩事件 → comp=0 误报「未主动压缩」（09-16 实证：
+                    # main evt-0695 实际压缩 1 次却报 comp=0）。修复：done 阶段若
+                    # payload.session（新会话）∈ 段内会话，则本段继承该压缩——压缩
+                    # done 恒发生在段首附近（压缩后 tokens 骤降切新段），不受时间窗口
+                    # 限制；started 阶段仍按旧逻辑（c_sid + 窗口，归旧段）。
+                    c_new_sid = (c.get("payload", {}) or {}).get("session")
                     if seg_sessions:
-                        c_sid = c.get("session_id") or (c.get("payload", {}) or {}).get("session_id")
-                        if c_sid and c_sid in seg_sessions:
+                        hit_old = in_window and c_sid and c_sid in seg_sessions
+                        # hit_new 判据不是 stage=="done"，而是「payload.session
+                        # ≠ 源会话」——converter 里 started 的 payload.session 恒等于
+                        # 源会话（c_sid），done 的 payload.session 才是压缩产出的
+                        # 新会话。据此：真实 done 匹配新段（evt-0695 实证）、真实
+                        # started 不会误配新段、测试/旧事件流仅有 payload.session
+                        # 时也能按会话锚点匹配（不依赖 stage 字段）。
+                        is_new_sid = bool(c_new_sid) and c_new_sid != c_sid
+                        hit_new = is_new_sid and c_new_sid in seg_sessions
+                        if hit_old or hit_new:
                             n_comp += 1
                         # 无 session_id 的压缩事件（旧事件流）：仍按时间窗口计，
                         # 但只有段无 session 信息时才宽松计（避免跨会话误归因）
-                        elif not c_sid:
+                        elif in_window and not c_sid and not c_new_sid:
                             n_comp += 1
                     else:
-                        n_comp += 1
+                        if in_window:
+                            n_comp += 1
 
             total_excess = 0
             total_excess_cache = 0

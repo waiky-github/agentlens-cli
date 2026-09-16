@@ -114,6 +114,10 @@ DEFAULT_KNOWN_AGENTS = [
     # 'agent.log' 导致 717 条影子误报；转换器已改语义化 source，此条兜底
     # 兼容旧报告/旧事件流。
     "agent.log",
+    # 2026-09-16 补充：build_config_snapshot.py 注入事件的 source 语义化标识
+    # （config-snapshot://{scope}），与 hermes:agent:log 同理是事件来源而非
+    # 运行中的智能体——不加会在每日审计产生 1 条 high 影子误报。
+    "hermes:agent:config",
 ]
 
 # Dangerous tools that require explicit approval before execution.
