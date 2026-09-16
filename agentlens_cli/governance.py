@@ -212,12 +212,15 @@ def detect_waste(events: list[dict], cost_model: CostModel = None) -> dict:
         key=lambda e: e.get("timestamp") or "",
     )
 
-    # 压缩事件（started/done），按时间戳排序，用于会话段归因
+    # 压缩事件（started/done），按时间戳排序，用于会话段归因。
+    # 只统计 started（done 是同一事件的确认，不重复计——2026-09-16 修复：
+    # 之前 started+done 都计入导致一次压缩算 2 次，段内出现 comp=5/10 虚高）。
     compressions = sorted(
-        [e for e in sorted_events if e.get("type") == "context_compression"],
+        [e for e in sorted_events
+         if e.get("type") == "context_compression"
+         and (e.get("payload", {}) or {}).get("stage") == "started"],
         key=lambda e: e.get("timestamp") or "",
     )
-    compression_ts = [e.get("timestamp") or "" for e in compressions]
 
     if all_model_calls:
         # Group model calls into sessions by detecting context resets
@@ -238,20 +241,59 @@ def detect_waste(events: list[dict], cost_model: CostModel = None) -> dict:
         if current:
             sessions.append(current)
 
-        for sess in sessions:
+        # 段边界时间窗口（2026-09-16 压缩归因修复）：压缩事件（started）几乎
+        # 总是发生在段尾之后、下一段首之前——因为「tokens 掉 50% 切段」依赖的
+        # 就是压缩 done 之后 tokens 骤降。所以段 i 的压缩归属窗口应为
+        # [段 i 首 call, 段 i+1 首 call)，而不是 [段 i 首, 段 i 尾]——
+        # 后者会把所有压缩事件都甩到段间间隙里（实证：researcher 会话 3 次
+        # 压缩全落在间隙，旧逻辑 comp=0 全丢）。
+        seg_windows = []  # (start_ts, end_ts_exclusive)，最后一段的 end 为 None
+        for i, sess in enumerate(sessions):
+            seg_windows.append((
+                sess[0].get("timestamp") or "",
+                sessions[i + 1][0].get("timestamp") or "" if i + 1 < len(sessions) else None,
+            ))
+
+        for idx, sess in enumerate(sessions):
             if len(sess) < 3:
                 continue
             baseline = sess[0].get("payload", {}).get("tokens_in", 0) or 0
             if baseline <= 0:
                 continue
 
-            # 会话峰值 + 段内压缩次数（bloat / 临界分支共用）
+            # 会话峰值 + 段内压缩次数（bloat / 临界分支共用）。
+            # 会话级归因（2026-09-16 修复）：压缩事件带 session_id（converter
+            # 从日志行 [session] 提取），按「段内会话 session_id ∩ 压缩事件
+            # session_id」匹配，而不是纯时间窗口——多会话并发时时间窗口会
+            # 跨会话误归因（comp 虚高）。段内可能混多个 session（并发/交替），
+            # 压缩事件只要属于段内任一 session 且时间戳落在段归属窗口内即计入。
             peak_tokens = max((mc.get("payload", {}).get("tokens_in", 0) or 0) for mc in sess)
-            s_ts0 = sess[0].get("timestamp") or ""
-            s_ts1 = sess[-1].get("timestamp") or ""
+            s_ts0, s_ts1 = seg_windows[idx]
+            # 段内涉及的 session_id 集合（converter 顶层字段 / payload 双来源）
+            seg_sessions = set()
+            for mc in sess:
+                sid = mc.get("session_id") or (mc.get("payload", {}) or {}).get("session_id")
+                if sid:
+                    seg_sessions.add(sid)
             n_comp = 0
-            if compression_ts and s_ts0 and s_ts1:
-                n_comp = sum(1 for c in compression_ts if s_ts0 <= c <= s_ts1)
+            if compressions and s_ts0:
+                for c in compressions:
+                    c_ts = c.get("timestamp") or ""
+                    if not c_ts:
+                        continue
+                    # 归属窗口：[段首, 下一段首)。最后一段无上界。
+                    if c_ts < s_ts0 or (s_ts1 and c_ts >= s_ts1):
+                        continue
+                    if seg_sessions:
+                        c_sid = c.get("session_id") or (c.get("payload", {}) or {}).get("session_id")
+                        if c_sid and c_sid in seg_sessions:
+                            n_comp += 1
+                        # 无 session_id 的压缩事件（旧事件流）：仍按时间窗口计，
+                        # 但只有段无 session 信息时才宽松计（避免跨会话误归因）
+                        elif not c_sid:
+                            n_comp += 1
+                    else:
+                        n_comp += 1
 
             total_excess = 0
             total_excess_cache = 0

@@ -442,7 +442,38 @@ class TestCostModel:
         assert "compacted" not in bloat[0]["recommendation"]
 
     def test_bloat_finding_compaction_count_matches(self):
-        """段内 2 次压缩仍 bloat → compaction_count == 2，建议调低 threshold。"""
+        """段内 2 次压缩（2×started）仍 bloat → compaction_count == 2，建议调低 threshold。
+
+        一次压缩只计 started（done 是同一事件的确认，不重复计——2026-09-16 修复）。
+        """
+        events, cm = self._bloat_session_events()
+        events.append(
+            {
+                "type": "context_compression",
+                "payload": {"stage": "started", "session": "s1", "messages": "200", "tokens": 250_000},
+                "event_id": "evt-c1",
+                "evidence_ref": "test:c1",
+                "timestamp": "2026-09-15T10:25:00+00:00",
+            }
+        )
+        events.append(
+            {
+                "type": "context_compression",
+                "payload": {"stage": "started", "session": "s1", "messages": "180", "tokens": 230_000},
+                "event_id": "evt-c2",
+                "evidence_ref": "test:c2",
+                "timestamp": "2026-09-15T10:28:00+00:00",
+            }
+        )
+        waste = detect_waste(events, cm)
+        bloat = [f for f in waste["findings"] if "context bloat" in f["title"]]
+        assert len(bloat) == 1
+        assert bloat[0]["compaction_count"] == 2
+        assert "compacted 2" in bloat[0]["recommendation"]
+        assert "threshold" in bloat[0]["recommendation"]
+
+    def test_bloat_finding_compression_done_not_counted(self):
+        """done 事件是 started 的确认，不重复计（一次压缩 = 1 次 started）。"""
         events, cm = self._bloat_session_events()
         events.append(
             {
@@ -465,12 +496,14 @@ class TestCostModel:
         waste = detect_waste(events, cm)
         bloat = [f for f in waste["findings"] if "context bloat" in f["title"]]
         assert len(bloat) == 1
-        assert bloat[0]["compaction_count"] == 2
-        assert "compacted 2" in bloat[0]["recommendation"]
-        assert "threshold" in bloat[0]["recommendation"]
+        assert bloat[0]["compaction_count"] == 1
+        assert "compacted 1" in bloat[0]["recommendation"]
 
     def test_bloat_finding_compression_outside_segment_ignored(self):
-        """压缩事件时间戳在会话段外 → 不计入该段。"""
+        """压缩事件时间戳在会话段外 → 不计入该段。
+
+        归属窗口为 [段首, 下一段首)；10:00 之前的压缩事件落在第一段窗口外 → 忽略。
+        """
         events, cm = self._bloat_session_events()
         events.append(
             {
@@ -485,6 +518,70 @@ class TestCostModel:
         bloat = [f for f in waste["findings"] if "context bloat" in f["title"]]
         assert len(bloat) == 1
         assert bloat[0]["compaction_count"] == 0
+
+    def test_bloat_finding_compression_in_segment_gap_counted(self):
+        """压缩事件落在段尾与下一段首之间的间隙 → 计入前一段。
+
+        回归 2026-09-16 实证：压缩 started 几乎总发生在「压缩 done 后 tokens 掉
+        50% 切段」的间隙里（researcher 会话 3 次压缩全落在间隙，旧逻辑 [段首,段尾]
+        窗口 comp=0 全丢）。归属窗口应为 [段首, 下一段首)。
+        """
+        cm = CostModel(input_price=3.0, output_price=9.0, cache_read_price=0.10)
+        events = []
+        # 段 A: 10:00~10:10~10:12（基线 50K → 300K → 290K），压缩 started 在 10:15（段间隙）
+        for i, ts in enumerate(
+            ["2026-09-15T10:00:00+00:00", "2026-09-15T10:10:00+00:00",
+             "2026-09-15T10:12:00+00:00"]
+        ):
+            events.append(
+                {
+                    "type": "model_call",
+                    "payload": {
+                        "agent": "test",
+                        "tokens_in": 50_000 if i == 0 else (300_000 if i == 1 else 290_000),
+                        "tokens_out": 0,
+                        "cache_hit": 50_000 if i == 0 else (300_000 if i == 1 else 290_000),
+                        "session_id": "s1",
+                    },
+                    "event_id": f"evt-a{i}",
+                    "evidence_ref": f"test:a{i}",
+                    "timestamp": ts,
+                }
+            )
+        # 段 B: 10:20 起（压缩后 tokens 掉到 8K 触发切段）
+        events.append(
+            {
+                "type": "model_call",
+                "payload": {
+                    "agent": "test",
+                    "tokens_in": 8_000,
+                    "tokens_out": 0,
+                    "cache_hit": 8_000,
+                    "session_id": "s1",
+                },
+                "event_id": "evt-b0",
+                "evidence_ref": "test:b0",
+                "timestamp": "2026-09-15T10:20:00+00:00",
+            }
+        )
+        # 压缩 started 落在段 A 尾与段 B 首之间的间隙（10:15）
+        events.append(
+            {
+                "type": "context_compression",
+                "payload": {"stage": "started", "session": "s1", "messages": "100", "tokens": 300_000},
+                "event_id": "evt-c1",
+                "evidence_ref": "test:c1",
+                "timestamp": "2026-09-15T10:15:00+00:00",
+            }
+        )
+        waste = detect_waste(events, cm)
+        bloat = [f for f in waste["findings"] if "context bloat" in f["title"]]
+        # 段 B 只有 1 个 call（len<3 跳过）→ 仅段 A 产生 bloat finding
+        assert len(bloat) == 1
+        # 段 A（peak 300K）的压缩计数应包含间隙里的这次 started
+        assert bloat[0]["call_count"] == 3
+        assert bloat[0]["compaction_count"] == 1
+        assert "compacted 1" in bloat[0]["recommendation"]
 
 
 # ── 优化1: 配置漂移审计（2026-09-15） ─────────────────────────────
@@ -632,7 +729,11 @@ class TestProximity:
         assert near[0]["distance_to_trigger"] == 10_000
 
     def test_compacted_session_not_flagged_near_line(self):
-        """已压缩过的会话即使接近触发线也不报 approaching（压缩是正常信号）。"""
+        """已压缩过的会话即使接近触发线也不报 approaching（压缩是正常信号）。
+
+        压缩用 started 表达（2026-09-16 起只计 started，done 不重复计）；
+        压缩 started 落在段尾间隙（10:15，下一段首 10:20 之前）→ 归入前一段。
+        """
         cm = CostModel(input_price=3.0, output_price=9.0, cache_read_price=0.10)
         events = [
             {"type": "model_call",
@@ -642,7 +743,7 @@ class TestProximity:
              "payload": {"agent": "test", "tokens_in": 290_000, "tokens_out": 0},
              "event_id": "evt-1", "timestamp": "2026-09-15T10:10:00+00:00"},
             {"type": "context_compression",
-             "payload": {"stage": "done", "session": "s1", "messages": "50->5", "tokens": 3_000},
+             "payload": {"stage": "started", "session": "s1", "messages": "50", "tokens": 3_000},
              "event_id": "evt-c1", "timestamp": "2026-09-15T10:15:00+00:00"},
             {"type": "model_call",
              "payload": {"agent": "test", "tokens_in": 250_000, "tokens_out": 0},
