@@ -52,7 +52,9 @@ def _send_feishu(target: str, subject: str, body: str, token_cmd: Optional[str] 
 
     # hermes send: message text via positional arg, -s for subject line.
     # -f expects a file path; body here is raw text, so pass it positionally.
-    cmd = ["hermes", "send", "-t", "feishu", "-s", subject, body]
+    # target: explicit feishu chat/group (feishu:xxx); empty → home channel.
+    feishu_target = f"feishu:{target}" if target else "feishu"
+    cmd = ["hermes", "send", "-t", feishu_target, "-s", subject, body]
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         if proc.returncode == 0:
@@ -111,10 +113,11 @@ def send_notify(subject: str, body: str, config: Optional[dict] = None, report_d
         config = _load_config(report_dir)
 
     if not config.get("enabled", False) or not config.get("channels"):
-        # Legacy fallback: hermes send -t feishu
+        # Legacy fallback: hermes send -t feishu (default target from env, else home channel)
+        feishu_target = os.environ.get("AGENTLENS_FEISHU_TARGET", "feishu")
         try:
             proc = subprocess.run(
-                ["hermes", "send", "-t", "feishu", "-s", subject, body],
+                ["hermes", "send", "-t", feishu_target, "-s", subject, body],
                 capture_output=True, text=True, timeout=30,
             )
             if proc.returncode == 0:
