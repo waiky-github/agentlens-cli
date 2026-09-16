@@ -47,6 +47,24 @@ def detect_waste(events: list[dict], cost_model: CostModel = None) -> dict:
         trigger_lines.append(float(thr) * float(ctx))
     trigger_line_tokens = int(min(trigger_lines)) if trigger_lines else DEFAULT_TRIGGER_LINE_TOKENS
 
+    def _trigger_line_for(profile: str) -> int:
+        """按 profile 取压缩触发线（threshold×context_length）。
+
+        2026-09-16 修复：之前全局取 min（所有 profile 都用 creative 的 100K），
+        researcher/main 真实触发线 200K 被压到 100K，proximity/距离判断失真
+        （researcher 185K 显示 186% 超线，实际离 200K 线还差 8%）。
+        profile 为 gateway（gw-N）或无快照时回退到全局最严 min（保守）。
+        """
+        # 主 profile 的 event_id 前缀是 ag-main，但 config snapshot 的 scope 是 default
+        scope = "default" if profile == "main" else profile
+        if scope in per_scope:
+            p = per_scope[scope]
+            thr = p.get("compression_threshold")
+            ctx = p.get("context_length") or DEFAULT_CONTEXT_LENGTH
+            if thr is not None:
+                return int(float(thr) * float(ctx))
+        return trigger_line_tokens
+
     # Build an ordered list of model_call / tool_invocation events
     tool_and_model = []
     for evt in sorted_events:
@@ -207,9 +225,22 @@ def detect_waste(events: list[dict], cost_model: CostModel = None) -> dict:
     # can distinguish "never compacted" (config off / threshold too
     # high) from "compacted but still bloated" (threshold too late).
     # ============================================================
+    # 排序 key：先按 profile（event_id 前缀）再按时间。2026-09-16 修复：
+    # 之前只按时间戳全局排序，多 profile 并发时不同 profile 的 model_call
+    # 交错插入同一会话（实证：creative-evt-1603 → researcher-evt-1446 →
+    # creative-evt-1605），_sid 变化强制切段把同一会话切碎，压缩事件被甩出
+    # 段窗口 → 假「peak>100K 且 comp=0 漏触发」。按 profile 分组后同会话
+    # 的调用连续排列，切段/压缩归因回到 profile 内部语义。
+    def _profile_key(e):
+        eid = e.get("event_id") or ""
+        parts = eid.split("-")
+        if len(parts) >= 2 and parts[0] in ("ag", "gw"):
+            return parts[1]
+        return "zzz-other"
+
     all_model_calls = sorted(
         [e for e in tool_and_model if e.get("type") == "model_call"],
-        key=lambda e: e.get("timestamp") or "",
+        key=lambda e: (_profile_key(e), e.get("timestamp") or ""),
     )
 
     # 压缩事件（started/done），按时间戳排序，用于会话段归因。
@@ -292,6 +323,10 @@ def detect_waste(events: list[dict], cost_model: CostModel = None) -> dict:
             # 压缩事件只要属于段内任一 session 且时间戳落在段归属窗口内即计入。
             peak_tokens = max((mc.get("payload", {}).get("tokens_in", 0) or 0) for mc in sess)
             s_ts0, s_ts1 = seg_windows[idx]
+            # 段所属 profile → 按该 profile 的真实压缩触发线（2026-09-16 修复：
+            # 之前全局取 min，researcher/main 真实 200K 被压到 creative 的 100K）。
+            # gw-N / 无前缀事件没有 profile 快照，回退全局最严 min（保守）。
+            seg_trigger = _trigger_line_for(_profile_key(sess[0]))
             # 段内涉及的 session_id 集合（converter 顶层字段 / payload 双来源）
             seg_sessions = set()
             for mc in sess:
@@ -363,8 +398,8 @@ def detect_waste(events: list[dict], cost_model: CostModel = None) -> dict:
                     # zine 实证：峰值 291,728 vs 触发线 300,000 差 8,272 ——
                     # 「差一点没触发」比事后 bloat 更早暴露风险。
                     "peak_tokens_in": peak_tokens,
-                    "trigger_line_tokens": trigger_line_tokens,
-                    "distance_to_trigger": trigger_line_tokens - peak_tokens,
+                    "trigger_line_tokens": seg_trigger,
+                    "distance_to_trigger": seg_trigger - peak_tokens,
                     "waste_ratio": round(
                         total_excess / max(1, sum(
                             mc.get("payload", {}).get("tokens_in", 0) or 0
@@ -378,7 +413,7 @@ def detect_waste(events: list[dict], cost_model: CostModel = None) -> dict:
                 })
 
                 # 临界会话：已 bloat 且峰值距触发线 < 20% → 补充提示触发线过低/过近
-                if trigger_line_tokens - peak_tokens < 0.2 * trigger_line_tokens:
+                if seg_trigger - peak_tokens < 0.2 * seg_trigger:
                     findings.append({
                         "severity": "info",
                         "title": "session peaked within 20% of compression trigger line",
@@ -388,14 +423,14 @@ def detect_waste(events: list[dict], cost_model: CostModel = None) -> dict:
                         ],
                         "call_count": len(sess),
                         "peak_tokens_in": peak_tokens,
-                        "trigger_line_tokens": trigger_line_tokens,
-                        "distance_to_trigger": trigger_line_tokens - peak_tokens,
+                        "trigger_line_tokens": seg_trigger,
+                        "distance_to_trigger": seg_trigger - peak_tokens,
                         "extra_tokens_in": 0,
                         "waste_ratio": 0.0,
                         "est_wasted_cost": 0.0,
                         "recommendation": (
                             f"session peak {peak_tokens:,} is within 20% of the "
-                            f"compression trigger line ({trigger_line_tokens:,}) — "
+                            f"compression trigger line ({seg_trigger:,}) — "
                             "compaction barely fired; consider lowering "
                             "compression.threshold for earlier, cheaper compaction"
                         ),
@@ -404,7 +439,7 @@ def detect_waste(events: list[dict], cost_model: CostModel = None) -> dict:
                     })
 
             # 未达 bloat 阈值但接近触发线且未压缩 → 临界风险预警
-            elif n_comp == 0 and NEAR_LINE_RATIO * trigger_line_tokens <= peak_tokens < trigger_line_tokens:
+            elif n_comp == 0 and NEAR_LINE_RATIO * seg_trigger <= peak_tokens < seg_trigger:
                 findings.append({
                     "severity": "info",
                     "title": "session approaching compression threshold (no compaction)",
@@ -414,15 +449,15 @@ def detect_waste(events: list[dict], cost_model: CostModel = None) -> dict:
                     ],
                     "call_count": len(sess),
                     "peak_tokens_in": peak_tokens,
-                    "trigger_line_tokens": trigger_line_tokens,
-                    "distance_to_trigger": trigger_line_tokens - peak_tokens,
+                    "trigger_line_tokens": seg_trigger,
+                    "distance_to_trigger": seg_trigger - peak_tokens,
                     "extra_tokens_in": 0,
                     "waste_ratio": 0.0,
                     "est_wasted_cost": 0.0,
                     "recommendation": (
                         f"session peak {peak_tokens:,} is within "
                         f"{int((1 - NEAR_LINE_RATIO) * 100)}% of the compression "
-                        f"trigger line ({trigger_line_tokens:,}) but never compacted — "
+                        f"trigger line ({seg_trigger:,}) but never compacted — "
                         "lower compression.threshold so the next long session compacts "
                         "before it approaches bloat"
                     ),
