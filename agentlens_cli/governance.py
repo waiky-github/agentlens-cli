@@ -224,6 +224,24 @@ def detect_waste(events: list[dict], cost_model: CostModel = None) -> dict:
 
     if all_model_calls:
         # Group model calls into sessions by detecting context resets
+        # 会话级切段（2026-09-16 修复）：除 tokens 掉 50% 外，session_id 变化
+        # 也强制切段——多 profile 日志拼接后并发会话交替时，A 结束 B 开始
+        # tokens 未必掉 50%（B 可能已进行到 80K），旧逻辑把不同 session 混进
+        # 同一段（实证：段3 含 3 个 session），baseline/peak/压缩归因全失真。
+        # 压缩（Hermes）会创建新 session_id，session 变化恰对应 context reset。
+        def _sid(e):
+            sid = e.get("session_id") or (e.get("payload", {}) or {}).get("session_id")
+            if sid:
+                return sid
+            # 兜底：无 session_id 的事件（converter 未从日志行提取到）用
+            # event_id 的 profile 前缀作伪 sid（ag-main / ag-creative / gw-1），
+            # 保证不同 profile 的事件即使缺 sid 也会强制切段，不跨 profile 混段。
+            eid = e.get("event_id") or ""
+            parts = eid.split("-")
+            if len(parts) >= 2 and parts[0] in ("ag", "gw"):
+                return f"pfx:{parts[0]}-{parts[1]}"
+            return None
+
         sessions = []
         current = [all_model_calls[0]]
         for i in range(1, len(all_model_calls)):
@@ -233,7 +251,12 @@ def detect_waste(events: list[dict], cost_model: CostModel = None) -> dict:
             curr_tokens = (
                 all_model_calls[i].get("payload", {}).get("tokens_in", 0) or 0
             )
+            prev_sid = _sid(all_model_calls[i - 1])
+            curr_sid = _sid(all_model_calls[i])
             if prev_tokens > 0 and curr_tokens < prev_tokens * 0.5:
+                sessions.append(current)
+                current = [all_model_calls[i]]
+            elif prev_sid and curr_sid and prev_sid != curr_sid:
                 sessions.append(current)
                 current = [all_model_calls[i]]
             else:
