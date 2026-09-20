@@ -54,6 +54,22 @@ def attribute_costs(events: list[dict], cost_model: CostModel = None) -> dict:
             agent = payload.get("agent", "unknown")
             agents[agent]["tool_calls"] += 1
 
+        elif etype == "task_completion":
+            # Some event streams carry aggregate cost_usage on task completion
+            # (tokens + estimated_cost) without per-call model_call events.
+            # Consume it so demo/sample data shows meaningful cost charts.
+            usage = payload.get("cost_usage", {}) or {}
+            agent = payload.get("from", "unknown")
+            tokens = usage.get("tokens", 0) or 0
+            est = usage.get("estimated_cost", 0) or 0
+            if tokens or est:
+                agents[agent]["tokens_in"] += tokens
+                agents[agent]["tokens_out"] += 0
+                agents[agent]["cost"] += est
+                agents[agent]["model_calls"] += 1
+                total_tokens_in += tokens
+                total_cost += est
+
     # Round costs
     for agent_data in agents.values():
         agent_data["cost"] = round(agent_data["cost"], 6)
