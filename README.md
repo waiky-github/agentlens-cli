@@ -4,7 +4,11 @@
 
 AgentLens Audit 让任何多 Agent 系统（Hermes / CrewAI / AutoGen / LangGraph）的协作过程**可见、可审、可复盘**。一条命令产出完整审计报告：谁拆的任务、为什么这么派、调了哪些工具、花了多少钱、出了事能否追责。
 
+与观测工具（Langfuse / LangSmith / OpenTelemetry）定位不同：观测回答「发生了什么」，审计回答「该不该发生、谁负责、怎么改」。两者解决不同层次的问题，可以共存。
+
 对齐中国网信办《智能体规范应用与创新发展实施意见》(2026-05) 的核心合规要求：行为可验证可追溯、影子智能体管控、决策权限分层。
+
+> 👉 [在线预览示例审计报告](docs/example-report.html)（内置样例数据生成，30 秒了解报告长什么样）
 
 ## ✨ 功能特性（七层审计）
 
@@ -132,7 +136,7 @@ agentlens-audit serve --host 0.0.0.0 --port 8010
 ## 🧪 测试
 
 ```bash
-python -m pytest tests/ -v   # 246 用例全绿
+python -m pytest tests/ -v   # 325 用例全绿
 ```
 
 ## 📦 发布
