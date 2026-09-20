@@ -1,5 +1,6 @@
 """Waste detection: detect, quantify, and recommend fixes for token waste."""
 
+import re
 from collections import defaultdict
 from datetime import datetime, timezone
 
@@ -17,6 +18,11 @@ CHARS_PER_TOKEN_ESTIMATE = 4  # rough estimate: ~4 chars per token
 CONFIG_LAX_THRESHOLD = 0.3
 DEFAULT_CONTEXT_LENGTH = 1_000_000
 DEFAULT_TRIGGER_LINE_TOKENS = int(CONFIG_LAX_THRESHOLD * DEFAULT_CONTEXT_LENGTH)  # 300k
+# Hermes 压缩触发线真实公式 = max(ctx×thr, 64K floor)（2026-09-18 源码实证，
+# context_compressor.py: MINIMUM_CONTEXT_LENGTH=64_000）。审计侧必须同源含 floor，
+# 否则 thr≤0.49 时审计出的触发线 13107/26214 与 Hermes 真实 65536 严重失真，
+# distance_to_trigger/临界预警全错。
+MINIMUM_CONTEXT_LENGTH = 64_000
 # 临界会话：峰值 ≥ 触发线 × 0.8 且未压缩 → info 预警（临界风险提前暴露）
 NEAR_LINE_RATIO = 0.8
 
@@ -44,7 +50,7 @@ def detect_waste(events: list[dict], cost_model: CostModel = None) -> dict:
         if thr is None:
             continue
         ctx = p.get("context_length") or DEFAULT_CONTEXT_LENGTH
-        trigger_lines.append(float(thr) * float(ctx))
+        trigger_lines.append(max(float(thr) * float(ctx), MINIMUM_CONTEXT_LENGTH))
     trigger_line_tokens = int(min(trigger_lines)) if trigger_lines else DEFAULT_TRIGGER_LINE_TOKENS
 
     def _trigger_line_for(profile: str) -> int:
@@ -62,7 +68,7 @@ def detect_waste(events: list[dict], cost_model: CostModel = None) -> dict:
             thr = p.get("compression_threshold")
             ctx = p.get("context_length") or DEFAULT_CONTEXT_LENGTH
             if thr is not None:
-                return int(float(thr) * float(ctx))
+                return int(max(float(thr) * float(ctx), MINIMUM_CONTEXT_LENGTH))
         return trigger_line_tokens
 
     # Build an ordered list of model_call / tool_invocation events
@@ -343,6 +349,7 @@ def detect_waste(events: list[dict], cost_model: CostModel = None) -> dict:
                 if sid:
                     seg_sessions.add(sid)
             n_comp = 0
+            matched_comps = []  # 段内匹配到的压缩事件（thrashing 分析用）
             if compressions and s_ts0:
                 for c in compressions:
                     c_ts = c.get("timestamp") or ""
@@ -372,13 +379,30 @@ def detect_waste(events: list[dict], cost_model: CostModel = None) -> dict:
                         hit_new = is_new_sid and c_new_sid in seg_sessions
                         if hit_old or hit_new:
                             n_comp += 1
+                            matched_comps.append(c)
                         # 无 session_id 的压缩事件（旧事件流）：仍按时间窗口计，
                         # 但只有段无 session 信息时才宽松计（避免跨会话误归因）
                         elif in_window and not c_sid and not c_new_sid:
                             n_comp += 1
+                            matched_comps.append(c)
                     else:
                         if in_window:
                             n_comp += 1
+                            matched_comps.append(c)
+            # 压缩 thrashing（2026-09-18）：段内 ≥3 次压缩且平均 messages 降幅
+            # <10% → 压缩没有真正清空上下文，压缩完又迅速长回去（churn）。
+            # 只统计 done 事件（只有 done 带 before->after 消息数，started 只有
+            # 单值）。converter 的 messages 字段是原始串，如 "200->7"。
+            thrash_msgs = []  # [(before, after), ...]
+            for c in matched_comps:
+                p = c.get("payload", {}) or {}
+                if (p.get("stage") or "").lower() != "done":
+                    continue
+                m = re.match(r"(\d+)\s*->\s*(\d+)", str(p.get("messages") or ""))
+                if m:
+                    before, after = int(m.group(1)), int(m.group(2))
+                    if before > 0 and after < before:
+                        thrash_msgs.append((before, after))
 
             total_excess = 0
             total_excess_cache = 0
@@ -491,6 +515,44 @@ def detect_waste(events: list[dict], cost_model: CostModel = None) -> dict:
                     "fix_ref": "context-compaction: lower threshold",
                     "recheck_metric": "distance_to_trigger",
                 })
+
+            # 压缩 thrashing（2026-09-18）：段内 ≥3 次压缩但每次 messages 平均降幅
+            # <10% → 压缩没有真正清空上下文，压缩完很快又长回去（churn）。这是
+            # bloat 的姊妹模式：前者「不压缩」，后者「压缩了但没效果」。典型成因：
+            # 长任务不切 /new、单会话内反复触发压缩但每次只清一点点。
+            if n_comp >= 3 and len(thrash_msgs) >= 3:
+                avg_reduction = sum(
+                    (b - a) / b for b, a in thrash_msgs
+                ) / len(thrash_msgs)
+                if avg_reduction < 0.10:
+                    findings.append({
+                        "severity": "medium",
+                        "title": (
+                            f"context compaction thrashing: {n_comp} compactions "
+                            f"with {avg_reduction * 100:.0f}% avg message reduction"
+                        ),
+                        "evidence_refs": [
+                            sess[0].get("event_id"),
+                            matched_comps[0].get("event_id"),
+                            matched_comps[-1].get("event_id"),
+                        ],
+                        "call_count": len(sess),
+                        "compaction_count": n_comp,
+                        "message_reduction_pct": round(avg_reduction, 4),
+                        "peak_tokens_in": peak_tokens,
+                        "extra_tokens_in": 0,
+                        "waste_ratio": 0.0,
+                        "est_wasted_cost": 0.0,
+                        "recommendation": (
+                            f"session compacted {n_comp}× but each compaction only "
+                            f"removed {avg_reduction * 100:.0f}% of messages — context "
+                            "grows right back after each pass. Split long tasks across "
+                            "sessions (/new) at milestone boundaries instead of letting "
+                            "the same session churn through repeated low-yield compactions"
+                        ),
+                        "fix_ref": "context-compaction: split long tasks across sessions",
+                        "recheck_metric": "message_reduction_pct",
+                    })
 
     # ============================================================
     # Detection 4: Low-value / looping calls (inefficient loops)

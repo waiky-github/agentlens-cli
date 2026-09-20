@@ -704,6 +704,22 @@ class TestProximity:
         assert bloat[0]["trigger_line_tokens"] == 200_000
         assert bloat[0]["distance_to_trigger"] == -100_000  # 已超线 100k
 
+    def test_trigger_line_respects_64k_floor(self):
+        """thr×ctx 低于 64k floor 时触发线取 64k（Hermes context_compressor 同源公式）。
+
+        2026-09-18 修复：真实公式 max(ctx×thr, 64_000)。之前审计侧直接取
+        thr×ctx，thr≤0.49 时触发线 13107/26214 与 Hermes 真实 65536 失真，
+        distance_to_trigger/临界预警全错。
+        """
+        events, cm = self._bloat_events()
+        events += _snap_events([
+            {"scope": "test", "compression_threshold": 0.05, "context_length": 1_000_000},
+        ])
+        waste = detect_waste(events, cm)
+        bloat = [f for f in waste["findings"] if "context bloat" in f["title"]]
+        assert len(bloat) == 1
+        assert bloat[0]["trigger_line_tokens"] == 64_000  # 0.05×1M=50k < floor → 64k
+
     def test_session_approaching_threshold_info(self):
         """未 bloat（excess 70k < 100k）但峰值 290k ≥ 80% 触发线 → info 预警。"""
         cm = CostModel(input_price=3.0, output_price=9.0, cache_read_price=0.10)
@@ -794,3 +810,77 @@ class TestCostModelExt:
         monkeypatch.setenv("AGENTLENS_PRICE_INPUT", "abc")
         cm = CostModel.from_env()
         assert cm.input_price == 3.0  # 非法值回退默认
+
+
+# ── 优化: compaction thrashing（2026-09-18） ──────────────────────
+
+
+class TestCompactionThrashing:
+    """段内 ≥3 次压缩但 messages 平均降幅 <10% → thrashing finding。
+
+    2026-09-18 实证：压缩 thrashing 是 bloat 的姊妹模式——前者「不压缩」，
+    后者「压缩了但没效果」（每次只清一点点，上下文很快又长回去，churn）。
+    """
+
+    def _thrash_events(self, msg_pair):
+        """4 个 model_call 的段 + 3 个 done 压缩事件（messages 形如 200->195）。"""
+        cm = CostModel(input_price=3.0, output_price=9.0, cache_read_price=0.10)
+        events = []
+        for i, ts in enumerate(
+            ["2026-09-15T10:00:00+00:00", "2026-09-15T10:10:00+00:00",
+             "2026-09-15T10:20:00+00:00", "2026-09-15T10:30:00+00:00"]
+        ):
+            events.append(
+                {
+                    "type": "model_call",
+                    "payload": {
+                        "agent": "test",
+                        "tokens_in": 100_000 if i == 0 else 300_000,
+                        "tokens_out": 0,
+                        "cache_hit": 100_000 if i == 0 else 300_000,
+                    },
+                    "event_id": f"evt-{i}",
+                    "evidence_ref": f"test:{i}",
+                    "timestamp": ts,
+                }
+            )
+        for j, ts in enumerate(["2026-09-15T10:05:00+00:00",
+                                "2026-09-15T10:15:00+00:00",
+                                "2026-09-15T10:25:00+00:00"]):
+            events.append(
+                {
+                    "type": "context_compression",
+                    "payload": {"stage": "done", "session": "s1",
+                                "messages": msg_pair, "tokens": 250_000},
+                    "event_id": f"evt-c{j}",
+                    "evidence_ref": f"test:c{j}",
+                    "timestamp": ts,
+                }
+            )
+        return events, cm
+
+    def test_low_yield_compactions_flagged(self):
+        """3 次压缩每次只降 2.5% messages → thrashing finding（medium）。"""
+        events, cm = self._thrash_events("200->195")
+        waste = detect_waste(events, cm)
+        thrash = [f for f in waste["findings"] if "thrashing" in f["title"]]
+        assert len(thrash) == 1
+        assert thrash[0]["severity"] == "medium"
+        assert thrash[0]["compaction_count"] == 3
+        assert abs(thrash[0]["message_reduction_pct"] - 0.025) < 1e-6
+        assert "milestone boundaries" in thrash[0]["recommendation"]
+
+    def test_effective_compaction_not_flagged(self):
+        """3 次压缩每次降 96.5% messages → 正常压缩，不报 thrashing。"""
+        events, cm = self._thrash_events("200->7")
+        waste = detect_waste(events, cm)
+        thrash = [f for f in waste["findings"] if "thrashing" in f["title"]]
+        assert thrash == []
+
+    def test_two_compactions_below_threshold_not_flagged(self):
+        """只有 2 次压缩（<3）→ 不报 thrashing。"""
+        events, cm = self._thrash_events("200->195")
+        events = [e for e in events if e.get("event_id") != "evt-c2"]
+        waste = detect_waste(events, cm)
+        thrash = [f for f in waste["findings"] if "thrashing" in f["title"]]
+        assert thrash == []
