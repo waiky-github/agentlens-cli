@@ -166,7 +166,7 @@ def detect_waste(events: list[dict], cost_model: CostModel = None) -> dict:
             tool_call_seqs[tool_name].append(evt)
 
     for tool_name, calls in tool_call_seqs.items():
-        if len(calls) < 2:
+        if len(calls) < 3:
             continue
         groups = []
         current_group = [calls[0]]
@@ -181,12 +181,12 @@ def detect_waste(events: list[dict], cost_model: CostModel = None) -> dict:
                 if (t2 - t1).total_seconds() < 300:
                     current_group.append(calls[i])
                 else:
-                    if len(current_group) >= 2:
+                    if len(current_group) >= 3:
                         groups.append(current_group)
                     current_group = [calls[i]]
             except (ValueError, TypeError):
                 continue
-        if len(current_group) >= 2:
+        if len(current_group) >= 3:
             groups.append(current_group)
 
         for group in groups:
