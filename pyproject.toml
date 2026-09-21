@@ -21,4 +21,4 @@ web = ["fastapi>=0.110", "uvicorn>=0.29"]
 include = ["agentlens_cli*"]
 
 [tool.setuptools.package-data]
-agentlens_cli = ["data/*.jsonl"]
+agentlens_cli = ["data/*.jsonl", "static/*.js"]

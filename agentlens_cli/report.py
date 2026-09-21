@@ -8,6 +8,27 @@ import html
 import json
 import math
 from datetime import datetime, timezone
+from pathlib import Path
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Bundled ECharts (offline single-file reports)
+# ──────────────────────────────────────────────────────────────────────
+# ECharts 5.5.0 minified (~1 MB), shipped inside the package so audit
+# reports render charts with zero network access. Loaded once per process.
+_ECHARTS_PATH = Path(__file__).resolve().parent / "static" / "echarts.min.js"
+
+_ECHARTS_JS: str | None = None
+
+
+def _echarts_js() -> str:
+    global _ECHARTS_JS
+    if _ECHARTS_JS is None:
+        try:
+            _ECHARTS_JS = _ECHARTS_PATH.read_text(encoding="utf-8")
+        except OSError:
+            _ECHARTS_JS = ""
+    return _ECHARTS_JS
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -223,14 +244,14 @@ class _HtmlBuilder:
             f'<div id="chart-agent" class="chart-canvas"></div></div>'
             f'</div>'
             f'</div>'
-            f'<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>'
+            f'<script>{_echarts_js()}</script>'
             f'<script>'
             f'(function(){{'
             f"var DATA = {self._js(js_data)};"
             f"if (typeof echarts === 'undefined') {{"
             f"  var boxes = document.querySelectorAll('.chart-canvas');"
             f"  for (var i = 0; i < boxes.length; i++) {{"
-            f"    boxes[i].innerHTML = '<div class=\"nodata\">图表需要联网加载 ECharts，当前环境无法访问 CDN</div>';"
+            f"    boxes[i].innerHTML = '<div class=\"nodata\">图表组件加载失败（内置 ECharts 缺失）</div>';"
             f"  }}"
             f"  return;"
             f"}}"
@@ -286,6 +307,10 @@ class _HtmlBuilder:
             f"setTimeout(resizeAll, 100);"
             f"window.addEventListener('resize', resizeAll);"
             f"window.addEventListener('load', resizeAll);"
+            f"if (typeof ResizeObserver !== 'undefined') {{"
+            f"  var ro = new ResizeObserver(function() {{ resizeAll(); }});"
+            f"  [document.getElementById('chart-severity'), document.getElementById('chart-waste'), document.getElementById('chart-agent')].forEach(function(el) {{ if (el) ro.observe(el); }});"
+            f"}}"
             f"}})();"
             f"</script>"
         )

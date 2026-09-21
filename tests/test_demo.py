@@ -90,23 +90,27 @@ class TestDemo:
                 html = fh.read()
             # Allow SVG namespace xmlns="http://www.w3.org/2000/svg" (standard XML namespace, not a resource load)
             html_no_svg_ns = html.replace('xmlns="http://www.w3.org/2000/svg"', "")
-            # Allow whitelisted ECharts CDN (dashboard option B, explicit product decision)
-            html_no_cdn = html_no_svg_ns.replace(
-                'https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js', ""
-            )
-            assert "http://" not in html_no_cdn, "demo HTML contains http:// reference"
-            assert "https://" not in html_no_cdn, "demo HTML contains https:// reference"
-            # Exactly four <script> tags: ECharts CDN loader + dashboard init +
-            # scrollspy nav + embedded findings-data JSON (programmatic consumers).
-            script_count = len(re.findall(r"<script", html_no_cdn.lower()))
+            # No external resource loads: <script src=...>, <link href=...>, <img src=...>
+            # pointing at http(s) URLs (ECharts is embedded inline since 0.3.1 —
+            # offline single-file reports). Note: echarts JS internals contain
+            # HTML-ish strings like '<img src="' — match only real resource URLs.
+            assert not re.search(
+                r'<(script|link|img)[^>]+(?:src|href)=["\']https?://', html_no_svg_ns, re.IGNORECASE
+            ), "demo HTML contains external resource URL"
+            # ECharts must be embedded (self-contained offline report)
+            assert "echarts" in html.lower(), "demo HTML missing embedded ECharts"
+            assert "cdn.jsdelivr" not in html, "demo HTML still references ECharts CDN"
+            # Script tags: embedded ECharts + dashboard init + scrollspy nav +
+            # embedded findings-data JSON (programmatic consumers).
+            script_count = len(re.findall(r"<script", html_no_svg_ns.lower()))
             assert script_count == 4, (
-                f"expected 4 <script> (ECharts CDN + dashboard init + scrollspy + findings-data), got {script_count}"
+                f"expected 4 <script> (ECharts + dashboard init + scrollspy + findings-data), got {script_count}"
             )
             # Embedded findings JSON should be present and parseable.
             import json as _json
             m = re.search(
                 r'<script id="findings-data" type="application/json">(.*?)</script>',
-                html_no_cdn, re.DOTALL,
+                html_no_svg_ns, re.DOTALL,
             )
             assert m, "findings-data JSON block missing"
             data = _json.loads(m.group(1))

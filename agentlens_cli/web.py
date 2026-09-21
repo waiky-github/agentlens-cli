@@ -19,7 +19,7 @@ from typing import Optional
 
 try:
     from fastapi import FastAPI, HTTPException, Request
-    from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
+    from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse
     from starlette.middleware.base import BaseHTTPMiddleware
 except ImportError:
     raise ImportError(
@@ -50,6 +50,14 @@ REPORT_DIR = Path(
 )
 
 app = FastAPI(title="AgentLens Audit Web", version="0.2.1")
+
+
+@app.get("/static/echarts.min.js", include_in_schema=False)
+async def static_echarts():
+    """Serve the bundled ECharts library (offline dashboard charts)."""
+    path = Path(__file__).resolve().parent / "static" / "echarts.min.js"
+    return FileResponse(path, media_type="application/javascript")
+
 
 # In-memory task log for /audit page
 _TASKS_FILE = REPORT_DIR / "audit-tasks.json"
@@ -1072,7 +1080,7 @@ def _build_dashboard() -> str:
         + wd_trend_html
         + recent_html
         # ECharts + dashboard init
-        + '<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>'
+        + '<script src="/static/echarts.min.js"></script>'
         + '<script>'
         + f'var TRENDS={trends_js};'
         + f'var WD_TRENDS={wd_trends_js};'
@@ -1185,6 +1193,13 @@ def _build_dashboard() -> str:
         + '  try{if(typeof wdChart!=="undefined")wdChart.resize()}catch(e){}'
         + '}'
         + 'window.addEventListener("resize",resizeAll);'
+        + 'if(typeof ResizeObserver!=="undefined"){'
+        + '  var ro=new ResizeObserver(function(){resizeAll();});'
+        + '  ["chart-trend","chart-severity","chart-watchdog"].forEach(function(id){'
+        + '    var el=document.getElementById(id);'
+        + '    if(el)ro.observe(el);'
+        + '  });'
+        + '}'
         + '})();'
         + '</script>'
     )
@@ -1409,21 +1424,31 @@ def _build_report_detail(date: str) -> HTMLResponse:
         # Extract <script>...</script> blocks and wrap in IIFE
         script_matches = re.findall(r"<script[^>]*>(.*?)</script>", raw_html, re.DOTALL)
         inline_scripts = []
+        # Bundled ECharts (embedded in self-contained reports) must keep global
+        # scope so dashboard init code can reach `echarts` — do NOT IIFE-wrap it.
+        echarts_script = ""
         for script_content in script_matches:
-            # Wrap in IIFE to avoid global variable conflicts with site scripts
             # Skip the ECharts CDN loader (empty or just src)
-            if script_content.strip():
-                inline_scripts.append(
-                    f"<script>(function(){{\n{script_content}\n}})();</script>"
-                )
-        # Also include the ECharts CDN <script src="...">
-        cdn_matches = re.findall(r'<script[^>]*src="[^"]*echarts[^"]*"[^>]*></script>', raw_html)
-        cdn_script = cdn_matches[0] if cdn_matches else ""
+            if not script_content.strip():
+                continue
+            if "echarts" in script_content[:4000].lower() and "echarts.init" not in script_content[:4000].lower():
+                # Heuristic: the big embedded ECharts bundle starts with a
+                # license header and defines the global; keep it unwrapped.
+                echarts_script = f"<script>{script_content}</script>"
+                continue
+            # Wrap in IIFE to avoid global variable conflicts with site scripts
+            inline_scripts.append(
+                f"<script>(function(){{\n{script_content}\n}})();</script>"
+            )
+        # Fallback: legacy CDN <script src="...echarts..."> (pre-offline reports)
+        if not echarts_script:
+            cdn_matches = re.findall(r'<script[^>]*src="[^"]*echarts[^"]*"[^>]*></script>', raw_html)
+            echarts_script = cdn_matches[0] if cdn_matches else ""
     except Exception:
         report_body = ""
         report_style = ""
         inline_scripts = []
-        cdn_script = ""
+        echarts_script = ""
 
     if not report_body:
         # Fallback: iframe
@@ -1469,7 +1494,7 @@ def _build_report_detail(date: str) -> HTMLResponse:
             f'<div class="report-frame">\n'
             f'{report_body}\n'
             f'</div>'
-            f'{cdn_script}\n'
+            f'{echarts_script}\n'
             + "\n".join(inline_scripts)
         )
 
