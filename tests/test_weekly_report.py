@@ -199,7 +199,7 @@ class TestWeeklyReportFormat:
         assert "漂移趋势" in text
         assert "最贵浪费发现" in text
         assert "一周小结" in text
-        assert "增长" in text  # findings: 2 -> 3
+        assert "日均" in text  # findings: 2/3/2 → 日均 2.3（不再用首尾端点对比）
 
     def test_report_with_missing_dates(self, tmp_path):
         """Report gracefully handles missing audit HTML files."""
