@@ -199,3 +199,13 @@ python -m agentlens_cli.mcp_server --transport http --port 8765 --host 127.0.0.1
 | `watchdog_status` | Watchdog 基线状态（基线事件数 / 报告数） |
 | `remediation_lookup` | 修复建议查询（按 finding title） |
 | `fix_tracking_status` | 修复跟踪状态（verified / verifying / regressed） |
+
+---
+
+## 📮 关注我们
+
+**公众号：AI Aperture** —— 分享 AI 工程实践、多 Agent 系统与开源项目经验。
+
+![AI Aperture 公众号二维码](assets/ai-aperture-qr.jpg)
+
+扫码关注，获取项目更新与更多技术内容。
