@@ -15,6 +15,7 @@ from agentlens_cli.governance import detect_waste
 from agentlens_cli.shadow import detect_shadow_agents
 from agentlens_cli.compliance import audit_compliance
 from agentlens_cli.config import CostModel, DEFAULT_KNOWN_AGENTS, DEFAULT_DANGEROUS_TOOLS
+from agentlens_cli.__main__ import _run_audit_for_diff, truncate_audit_result
 
 
 EXAMPLES_DIR = Path(__file__).resolve().parent.parent / "examples"
@@ -256,6 +257,51 @@ class TestCompliance:
 
 
 # ── Hermes Gateway Events ──────────────────────────────────────────
+
+
+class TestAuditSummary:
+    """Summary mode must be smaller than full JSON and still contain key fields."""
+
+    def test_summary_is_smaller_than_full(self):
+        events = _load(EXAMPLES_DIR / "hermes_gateway_events.jsonl")
+        full = _run_audit_for_diff(events, summary=False)
+        summary = _run_audit_for_diff(events, summary=True, max_findings=5)
+
+        full_json = json.dumps(full, ensure_ascii=False)
+        summary_json = json.dumps(summary, ensure_ascii=False)
+        assert len(summary_json) < len(full_json), (
+            f"summary should be smaller than full: {len(summary_json)} vs {len(full_json)}"
+        )
+
+    def test_summary_keeps_key_fields(self):
+        events = _load(EXAMPLES_DIR / "hermes_gateway_events.jsonl")
+        summary = _run_audit_for_diff(events, summary=True, max_findings=5)
+
+        assert summary["events_loaded"] == 11268
+        assert "metrics" in summary.get("graph", {})
+        assert "summary" in summary.get("decision", {})
+        assert "completeness" in summary.get("evidence", {})
+        assert "total_cost" in summary.get("cost", {})
+        assert "summary" in summary.get("shadow", {})
+        assert "summary" in summary.get("compliance", {})
+
+    def test_summary_truncates_layers(self):
+        events = _load(EXAMPLES_DIR / "hermes_gateway_events.jsonl")
+        summary = _run_audit_for_diff(events, summary=True, max_findings=3)
+
+        assert summary["summary_truncated"] is True
+        assert len(summary["graph"]["nodes"]) <= 50
+        assert len(summary["graph"]["edges"]) <= 100
+        assert len(summary["decision"]["decision_chain"]) <= 20
+        assert len(summary["cost"]["findings"]) <= 3
+        assert len(summary["shadow"]["findings"]) <= 3
+        assert len(summary["compliance"]["findings"]) <= 3
+
+    def test_summary_does_not_affect_full_mode(self):
+        events = _load(EXAMPLES_DIR / "hermes_gateway_events.jsonl")
+        full = _run_audit_for_diff(events, summary=False)
+        assert full.get("summary_truncated") is not True
+        assert "cost_by_agent" in full.get("cost", {})
 
 
 class TestHermesGateway:

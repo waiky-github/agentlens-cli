@@ -291,6 +291,14 @@ def build_cmd_audit(subparsers):
         "--prev-hash", default=None,
         help="Previous report hash to chain this report onto (tamper-evident audit trail)",
     )
+    p.add_argument(
+        "--summary", action="store_true", default=False,
+        help="Return a truncated summary instead of the full audit JSON (saves tokens on large audits)",
+    )
+    p.add_argument(
+        "--max-findings", type=int, default=20,
+        help="Max findings to keep per layer in summary mode (default: 20)",
+    )
     p.set_defaults(func=cmd_audit)
 
 
@@ -411,58 +419,13 @@ def cmd_audit(args):
     total_wasted = governance_data["total_est_wasted_cost"]
     avoidable_ratio = round(total_wasted / total_cost, 4) if total_cost > 0 else 0.0
 
-    result = {
-        "events_loaded": len(events),
-        "graph": {
-            "graph_id": graph_data["graph_id"],
-            "nodes": graph_data["nodes"],
-            "edges": graph_data["edges"],
-            "data_gaps": graph_data["data_gaps"],
-            "metrics": graph_data["metrics"],
-            "findings": graph_data["findings"],
-        },
-        "decision": {
-            "audit_id": decision_data["audit_id"],
-            "decision_chain": decision_data["decision_chain"],
-            "findings": decision_data["findings"],
-            "summary": decision_data["summary"],
-            "approval_bypass_detected": decision_data["approval_bypass_detected"],
-        },
-        "evidence": {
-            "verification_id": evidence_data["verification_id"],
-            "claims_checked": evidence_data["claims_checked"],
-            "verified": evidence_data["verified"],
-            "completeness": evidence_data["completeness"],
-            "unreachable": evidence_data["unreachable"],
-            "missing_evidence": evidence_data["missing_evidence"],
-            "findings": evidence_data["findings"],
-            "conclusion": evidence_data["conclusion"],
-        },
-        "cost": {
-            "cost_by_agent": cost_attribution["cost_by_agent"],
-            "total_tokens_in": cost_attribution["total_tokens_in"],
-            "total_tokens_out": cost_attribution["total_tokens_out"],
-            "total_cost": cost_attribution["total_cost"],
-            "cost_model": cost_attribution["cost_model"],
-            "estimates": cost_attribution["estimates"],
-            "findings": governance_data["findings"],
-            "total_est_wasted_cost": governance_data["total_est_wasted_cost"],
-            "avoidable_cost_ratio": avoidable_ratio,
-        },
-        "shadow": {
-            "summary": (
-                f"{len(shadow_findings)} shadow agent findings"
-                if shadow_findings
-                else "no shadow agent findings"
-            ),
-            "findings": shadow_findings,
-        },
-        "compliance": {
-            "summary": compliance_summary,
-            "findings": compliance_findings,
-            "decision_boundary_model": compliance_data["decision_boundary_model"],
-        },
-    }
+    result = _run_audit_for_diff(
+        events,
+        known_agents=known_agents,
+        dangerous_tools=dangerous_tools,
+        summary=getattr(args, "summary", False),
+        max_findings=getattr(args, "max_findings", 20),
+    )
 
     # Apply regulation references to all findings across all layers
     map_all_layers(result)
@@ -549,11 +512,66 @@ def build_cmd_diff(subparsers):
         help="Write output to file (default: stdout)",
     )
     p.set_defaults(func=cmd_diff)
+def _top_findings(findings: list[dict], limit: int) -> list[dict]:
+    if len(findings) <= limit:
+        return findings
+
+    def _cost_key(f: dict) -> float:
+        val = f.get("est_wasted_cost")
+        if isinstance(val, (int, float)):
+            return float(val)
+        return 0.0
+
+    return sorted(findings, key=_cost_key, reverse=True)[:limit]
 
 
-def _run_audit_for_diff(events: list[dict]) -> dict:
+def truncate_audit_result(result: dict, max_findings: int = 20) -> dict:
+    """Return a compact summary of the audit result for MCP / CLI summary mode."""
+    out = dict(result)
+    graph = dict(out.get("graph", {}))
+    graph["nodes"] = graph.get("nodes", [])[: max(1, min(max_findings, 50))]
+    graph["edges"] = graph.get("edges", [])[: max(1, min(max_findings, 100))]
+    for drop_key in ("data_gaps", "findings"):
+        graph.pop(drop_key, None)
+    out["graph"] = graph
+
+    decision = dict(out.get("decision", {}))
+    decision["decision_chain"] = decision.get("decision_chain", [])[: max(1, min(max_findings, 20))]
+    out["decision"] = decision
+
+    evidence = dict(out.get("evidence", {}))
+    for drop_key in ("missing_evidence", "unreachable"):
+        evidence.pop(drop_key, None)
+    out["evidence"] = evidence
+
+    cost = dict(out.get("cost", {}))
+    cost["findings"] = _top_findings(cost.get("findings", []), max_findings)
+    cost.pop("cost_by_agent", None)
+    cost.pop("estimates", None)
+    out["cost"] = cost
+
+    shadow = dict(out.get("shadow", {}))
+    shadow["findings"] = _top_findings(shadow.get("findings", []), max_findings)
+    out["shadow"] = shadow
+
+    compliance = dict(out.get("compliance", {}))
+    compliance["findings"] = _top_findings(compliance.get("findings", []), max_findings)
+    out["compliance"] = compliance
+
+    out["summary_truncated"] = True
+    return out
+
+
+def _run_audit_for_diff(
+    events: list[dict],
+    known_agents: list[str] | None = None,
+    dangerous_tools: list[str] | None = None,
+    summary: bool = False,
+    max_findings: int = 20,
+) -> dict:
     """Run a full six-layer audit on events and return the result dict, for diff comparison."""
-    from .config import CostModel
+    from .config import CostModel, DEFAULT_KNOWN_AGENTS, DEFAULT_DANGEROUS_TOOLS
+
     cost_model = CostModel()
 
     graph_data = build_graph(events)
@@ -565,18 +583,30 @@ def _run_audit_for_diff(events: list[dict]) -> dict:
     evidence_data = verify_evidence(events, all_findings)
     cost_attribution = attribute_costs(events, cost_model)
     governance_data = detect_waste(events, cost_model)
-    shadow_findings = detect_shadow_agents(events, None, None)
+    shadow_findings = detect_shadow_agents(
+        events,
+        known_agents or DEFAULT_KNOWN_AGENTS,
+        dangerous_tools or DEFAULT_DANGEROUS_TOOLS,
+    )
     compliance_data = audit_compliance(events)
+    leakage_findings = audit_system_prompt_leakage(events)
 
     total_cost = cost_attribution["total_cost"]
     total_wasted = governance_data["total_est_wasted_cost"]
     avoidable_ratio = round(total_wasted / total_cost, 4) if total_cost > 0 else 0.0
 
+    compliance_findings = compliance_data["findings"] + leakage_findings
+    compliance_summary = compliance_data["summary"]
+    if leakage_findings:
+        compliance_summary = f"{compliance_summary} + {len(leakage_findings)} leakage findings"
+
     result = {
         "events_loaded": len(events),
         "graph": {
+            "graph_id": graph_data["graph_id"],
             "nodes": graph_data["nodes"],
             "edges": graph_data["edges"],
+            "data_gaps": graph_data["data_gaps"],
             "metrics": graph_data["metrics"],
             "findings": graph_data["findings"],
         },
@@ -584,32 +614,49 @@ def _run_audit_for_diff(events: list[dict]) -> dict:
             "decision_chain": decision_data["decision_chain"],
             "findings": decision_data["findings"],
             "summary": decision_data["summary"],
+            "approval_bypass_detected": decision_data["approval_bypass_detected"],
         },
         "evidence": {
+            "verification_id": evidence_data["verification_id"],
             "claims_checked": evidence_data["claims_checked"],
             "verified": evidence_data["verified"],
             "completeness": evidence_data["completeness"],
+            "unreachable": evidence_data["unreachable"],
+            "missing_evidence": evidence_data["missing_evidence"],
             "findings": evidence_data["findings"],
+            "conclusion": evidence_data["conclusion"],
         },
         "cost": {
-            "total_cost": cost_attribution["total_cost"],
+            "cost_by_agent": cost_attribution["cost_by_agent"],
             "total_tokens_in": cost_attribution["total_tokens_in"],
             "total_tokens_out": cost_attribution["total_tokens_out"],
+            "total_cost": cost_attribution["total_cost"],
+            "cost_model": cost_attribution["cost_model"],
+            "estimates": cost_attribution["estimates"],
             "findings": governance_data["findings"],
             "total_est_wasted_cost": governance_data["total_est_wasted_cost"],
             "avoidable_cost_ratio": avoidable_ratio,
         },
         "shadow": {
+            "summary": (
+                f"{len(shadow_findings)} shadow agent findings"
+                if shadow_findings
+                else "no shadow agent findings"
+            ),
             "findings": shadow_findings,
         },
         "compliance": {
-            "findings": compliance_data["findings"] + audit_system_prompt_leakage(events),
+            "summary": compliance_summary,
+            "findings": compliance_findings,
+            "decision_boundary_model": compliance_data["decision_boundary_model"],
         },
     }
 
     map_all_layers(result)
     map_all_remediations(result)
 
+    if summary:
+        return truncate_audit_result(result, max_findings=max_findings)
     return result
 
 

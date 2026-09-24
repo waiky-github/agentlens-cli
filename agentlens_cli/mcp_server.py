@@ -39,16 +39,17 @@ mcp = FastMCP("agentlens-audit")
 
 
 @mcp.tool()
-def audit(events_path: str) -> str:
+def audit(events_path: str, summary: bool = False, max_findings: int = 20) -> str:
     """对事件流文件执行完整七层审计（协作图谱、决策审计、证据链、成本治理、影子智能体、决策权限合规、法规映射）。
 
     参数:
         events_path: 事件流文件路径（JSONL / JSON / gateway.log）
+        summary: 是否返回精简摘要（默认 False，返回完整 JSON）
+        max_findings: summary 模式下每层最多返回的 findings 数（默认 20）
 
     返回:
         JSON 字符串，包含七层审计结果 + integrity 防篡改哈希块。
-        格式: {"events_loaded": N, "graph": {...}, "decision": {...}, "evidence": {...},
-               "cost": {...}, "shadow": {...}, "compliance": {...}, "integrity": {...}}
+        summary=True 时会裁剪 nodes/edges/decision_chain/findings，显著降低 token 消耗。
     """
     try:
         if not os.path.isfile(events_path):
@@ -58,7 +59,7 @@ def audit(events_path: str) -> str:
         if not events:
             return json.dumps({"error": f"未能从文件解析到事件: {events_path}"}, ensure_ascii=False)
 
-        result = _run_audit_for_diff(events)
+        result = _run_audit_for_diff(events, summary=summary, max_findings=max_findings)
         result["integrity"] = build_integrity_block(result)
         return json.dumps(result, ensure_ascii=False)
     except Exception as exc:
